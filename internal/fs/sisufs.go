@@ -30,6 +30,7 @@ type SisuFS struct {
 	providers    map[string]provider.Provider
 	config       Config
 	pendingFiles map[string]*writeableSisuFile // tracks files being written
+	virtualDirs  map[string]bool               // tracks directories created via mkdir
 	mu           sync.RWMutex
 }
 
@@ -40,6 +41,7 @@ func NewSisuFS(cfg Config) (*SisuFS, error) {
 		providers:    make(map[string]provider.Provider),
 		config:       cfg,
 		pendingFiles: make(map[string]*writeableSisuFile),
+		virtualDirs:  make(map[string]bool),
 	}
 
 	// Initialize providers
@@ -48,6 +50,12 @@ func NewSisuFS(cfg Config) (*SisuFS, error) {
 		return nil, err
 	}
 	fs.providers["s3"] = s3Provider
+
+	ssmProvider, err := provider.NewSSMProvider(cfg.Profile, cfg.Region)
+	if err != nil {
+		return nil, err
+	}
+	fs.providers["ssm"] = ssmProvider
 
 	return fs, nil
 }
@@ -137,6 +145,16 @@ func (f *SisuFS) GetAttr(name string, ctx *fuse.Context) (*fuse.Attr, fuse.Statu
 			Size: uint64(pending.buf.Len()),
 		}, fuse.OK
 	}
+	// Check if this is a virtual directory created via mkdir
+	if f.virtualDirs[name] {
+		f.mu.RUnlock()
+		if Debug {
+			log.Printf("[fs] GetAttr: returning virtual dir attrs for %q", name)
+		}
+		return &fuse.Attr{
+			Mode: fuse.S_IFDIR | 0777,
+		}, fuse.OK
+	}
 	f.mu.RUnlock()
 
 	entry, err := prov.Stat(context.Background(), subpath)
@@ -163,6 +181,31 @@ func (f *SisuFS) Access(name string, mode uint32, ctx *fuse.Context) fuse.Status
 	if Debug {
 		log.Printf("[fs] Access: name=%q mode=%d", name, mode)
 	}
+	return fuse.OK
+}
+
+// Mkdir creates a directory (for SSM, this is a no-op since directories are virtual)
+func (f *SisuFS) Mkdir(name string, mode uint32, ctx *fuse.Context) fuse.Status {
+	if Debug {
+		log.Printf("[fs] Mkdir: name=%q mode=%d", name, mode)
+	}
+
+	parts := strings.SplitN(name, "/", 2)
+	if len(parts) < 2 {
+		return fuse.EPERM
+	}
+
+	providerName := parts[0]
+	_, ok := f.providers[providerName]
+	if !ok {
+		return fuse.ENOENT
+	}
+
+	// For SSM and S3, directories are virtual - track them locally
+	f.mu.Lock()
+	f.virtualDirs[name] = true
+	f.mu.Unlock()
+
 	return fuse.OK
 }
 
@@ -224,6 +267,13 @@ func (f *SisuFS) OpenDir(name string, ctx *fuse.Context) ([]fuse.DirEntry, fuse.
 
 	provEntries, err := prov.ReadDir(context.Background(), subpath)
 	if err != nil {
+		// Check if this is a virtual directory
+		f.mu.RLock()
+		isVirtual := f.virtualDirs[name]
+		f.mu.RUnlock()
+		if isVirtual {
+			return []fuse.DirEntry{}, fuse.OK
+		}
 		return nil, fuse.EIO
 	}
 
