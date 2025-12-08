@@ -78,7 +78,6 @@ func (p *SSMProvider) listParameters(ctx context.Context, path string) ([]Entry,
 		Path:           aws.String(path),
 		Recursive:      aws.Bool(false),
 		WithDecryption: aws.Bool(false),
-		MaxResults:     aws.Int32(10), // Limit for performance
 	})
 
 	for paginator.HasMorePages() {
@@ -133,7 +132,6 @@ func (p *SSMProvider) listParameters(ctx context.Context, path string) ([]Entry,
 				Values: []string{path},
 			},
 		},
-		MaxResults: aws.Int32(50),
 	})
 
 	for descPaginator.HasMorePages() {

@@ -101,7 +101,7 @@ func (p *S3Provider) listBuckets(ctx context.Context) ([]Entry, error) {
 	return entries, nil
 }
 
-const maxEntries = 10
+const maxS3Entries = 100
 
 func (p *S3Provider) listObjects(ctx context.Context, bucket, prefix string) ([]Entry, error) {
 	var entries []Entry
@@ -111,7 +111,7 @@ func (p *S3Provider) listObjects(ctx context.Context, bucket, prefix string) ([]
 		Bucket:    aws.String(bucket),
 		Prefix:    aws.String(prefix),
 		Delimiter: aws.String("/"),
-		MaxKeys:   aws.Int32(maxEntries),
+		MaxKeys:   aws.Int32(maxS3Entries),
 	})
 	if err != nil {
 		return nil, err
@@ -178,7 +178,7 @@ func (p *S3Provider) Read(ctx context.Context, path string) ([]byte, error) {
 
 	// Handle virtual _more_results.txt file
 	if strings.HasSuffix(key, "_more_results.txt") {
-		return []byte(moreResultsMessage(maxEntries)), nil
+		return []byte(moreResultsMessage(maxS3Entries)), nil
 	}
 
 	resp, err := p.client.GetObject(ctx, &s3.GetObjectInput{
@@ -232,7 +232,7 @@ func (p *S3Provider) statUncached(ctx context.Context, path string) (*Entry, err
 		return &Entry{
 			Name:  "_more_results.txt",
 			IsDir: false,
-			Size:  int64(len(moreResultsMessage(maxEntries))),
+			Size:  int64(len(moreResultsMessage(maxS3Entries))),
 		}, nil
 	}
 
