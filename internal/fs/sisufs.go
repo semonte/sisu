@@ -57,6 +57,12 @@ func NewSisuFS(cfg Config) (*SisuFS, error) {
 	}
 	fs.providers["ssm"] = ssmProvider
 
+	vpcProvider, err := provider.NewVPCProvider(cfg.Profile, cfg.Region)
+	if err != nil {
+		return nil, err
+	}
+	fs.providers["vpc"] = vpcProvider
+
 	return fs, nil
 }
 
@@ -294,6 +300,10 @@ func (f *SisuFS) OpenDir(name string, ctx *fuse.Context) ([]fuse.DirEntry, fuse.
 
 // Open opens a file for reading
 func (f *SisuFS) Open(name string, flags uint32, ctx *fuse.Context) (nodefs.File, fuse.Status) {
+	if Debug {
+		log.Printf("[fs] Open: name=%q flags=%d", name, flags)
+	}
+
 	parts := strings.SplitN(name, "/", 2)
 	if len(parts) < 2 {
 		return nil, fuse.ENOENT
@@ -308,7 +318,14 @@ func (f *SisuFS) Open(name string, flags uint32, ctx *fuse.Context) (nodefs.File
 	subpath := parts[1]
 	data, err := prov.Read(context.Background(), subpath)
 	if err != nil {
+		if Debug {
+			log.Printf("[fs] Open: Read failed for %q: %v", name, err)
+		}
 		return nil, fuse.EIO
+	}
+
+	if Debug {
+		log.Printf("[fs] Open: Read %d bytes for %q", len(data), name)
 	}
 
 	return &sisuFile{

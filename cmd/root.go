@@ -11,6 +11,7 @@ import (
 
 	"github.com/smonte/sisu/internal/cache"
 	"github.com/smonte/sisu/internal/fs"
+	"github.com/smonte/sisu/internal/provider"
 	"github.com/spf13/cobra"
 )
 
@@ -90,6 +91,7 @@ func runSisu(cmd *cobra.Command, args []string) error {
 		fmt.Println("Debug mode: enabled")
 		cache.Debug = true
 		fs.Debug = true
+		provider.Debug = true
 	}
 
 	// Create and mount the filesystem
