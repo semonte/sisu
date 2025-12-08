@@ -63,6 +63,12 @@ func NewSisuFS(cfg Config) (*SisuFS, error) {
 	}
 	fs.providers["vpc"] = vpcProvider
 
+	iamProvider, err := provider.NewIAMProvider(cfg.Profile, cfg.Region)
+	if err != nil {
+		return nil, err
+	}
+	fs.providers["iam"] = iamProvider
+
 	return fs, nil
 }
 
