@@ -1,4 +1,4 @@
-module github.com/smonte/sisu
+module github.com/semonte/sisu
 
 go 1.24.5
 

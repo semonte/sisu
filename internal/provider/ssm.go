@@ -10,7 +10,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
 	"github.com/aws/aws-sdk-go-v2/service/ssm/types"
-	"github.com/smonte/sisu/internal/cache"
+	"github.com/semonte/sisu/internal/cache"
 )
 
 // SSMProvider provides access to SSM Parameter Store

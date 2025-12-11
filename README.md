@@ -7,7 +7,7 @@ Browse AWS like a filesystem.
 ## Installation
 
 ```bash
-go install github.com/smonte/sisu@latest
+go install github.com/semonte/sisu@latest
 ```
 
 ### Requirements

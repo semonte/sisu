@@ -7,9 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/smonte/sisu/internal/cache"
-	"github.com/smonte/sisu/internal/fs"
-	"github.com/smonte/sisu/internal/provider"
+	"github.com/semonte/sisu/internal/cache"
+	"github.com/semonte/sisu/internal/fs"
+	"github.com/semonte/sisu/internal/provider"
 	"github.com/spf13/cobra"
 )
 

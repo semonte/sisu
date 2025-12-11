@@ -12,7 +12,7 @@ import (
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/hanwen/go-fuse/v2/fuse/nodefs"
 	"github.com/hanwen/go-fuse/v2/fuse/pathfs"
-	"github.com/smonte/sisu/internal/provider"
+	"github.com/semonte/sisu/internal/provider"
 )
 
 // Debug controls whether filesystem operations are logged

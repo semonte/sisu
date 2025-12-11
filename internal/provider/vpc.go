@@ -12,7 +12,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ec2/types"
-	"github.com/smonte/sisu/internal/cache"
+	"github.com/semonte/sisu/internal/cache"
 )
 
 // Debug controls whether VPC provider operations are logged

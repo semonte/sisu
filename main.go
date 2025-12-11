@@ -1,7 +1,7 @@
 package main
 
 import (
-	"github.com/smonte/sisu/cmd"
+	"github.com/semonte/sisu/cmd"
 )
 
 func main() {
