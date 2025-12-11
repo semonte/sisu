@@ -39,7 +39,6 @@ This mounts your AWS resources to `~/.sisu/mnt` and opens a shell. Type `exit` t
 ```bash
 sisu --profile myprofile    # Use specific AWS profile
 sisu --region us-west-2     # Use specific region
-sisu --background           # Run as daemon
 sisu stop                   # Unmount
 ```
 
@@ -52,10 +51,10 @@ sisu stop                   # Unmount
 grep -r '"FromPort": 22' vpc/*/security-groups/
 
 # Find all roles trusted by Lambda
-grep -r "lambda.amazonaws.com" iam/roles/
+grep -l "lambda.amazonaws.com" iam/roles/*/info.json
 
 # Find who has AdministratorAccess
-grep -r "AdministratorAccess" iam/users/
+grep -l "AdministratorAccess" iam/users/*/policies.json
 
 # Search SSM for database connections
 grep -r "postgres://" ssm/
@@ -68,20 +67,17 @@ grep -r "postgres://" ssm/
 diff vpc/vpc-aaa/security-groups/sg-111.json vpc/vpc-bbb/security-groups/sg-222.json
 
 # Compare IAM roles
-diff iam/roles/prod-api.json iam/roles/staging-api.json
+diff iam/roles/prod-api/info.json iam/roles/staging-api/info.json
 ```
 
 ### Pipe to unix tools
 
 ```bash
 # Pretty print with jq
-cat iam/roles/my-role.json | jq '.AssumeRolePolicyDocument'
+cat iam/roles/my-role/info.json | jq '.AssumeRolePolicyDocument'
 
 # Count resources
 ls iam/roles/ | wc -l
-
-# Fuzzy find with fzf
-cat $(ls iam/roles/*.json | fzf)
 ```
 
 ### Edit SSM parameters
@@ -91,7 +87,7 @@ cat $(ls iam/roles/*.json | fzf)
 cat ssm/myapp/database-url
 
 # Write
-echo "postgres://prod-db:5432" > ssm/myapp/database-url
+echo "postgres://prod-db:5432" > ssm/database-url
 
 # Use your editor
 vim ssm/myapp/config
@@ -119,9 +115,8 @@ rm s3/my-bucket/old-file.txt
 | VPC (subnets, security groups, route tables) | yes | - | - |
 | IAM (users, roles, policies, groups) | yes | - | - |
 
-## Tips
+## Notes
 
-- Use `ripgrep` (`rg`) instead of `grep -r` for faster parallel searches
 - Results are cached for 5 minutes to reduce API calls
 - S3 listings are limited to 100 items per directory
 
