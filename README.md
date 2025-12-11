@@ -1,30 +1,43 @@
-# sisu
+# sisu ⚡
 
-Browse AWS like a filesystem.
+**Your AWS, as a filesystem.**
 
-`grep`, `diff`, `cat`, `vim` your AWS resources. No more JSON wrangling with the AWS CLI.
+This:
+```bash
+grep -l "AdministratorAccess" iam/users/*/policies.json
+```
 
-## Installation
+Instead of this:
+```bash
+aws iam list-users --query 'Users[].UserName' --output text | \
+  xargs -I{} sh -c 'aws iam list-attached-user-policies --user-name {} --query "AttachedPolicies[].PolicyArn" --output text' | \
+  grep AdministratorAccess
+```
+
+## What is this? 🤔
+
+sisu mounts AWS resources as a local filesystem. Use the tools you already know - `grep`, `cat`, `diff`, `vim` - instead of wrestling with JSON and the AWS CLI. Currently supports S3, SSM, IAM, and VPC.
+
+
+## Install 📦
 
 ```bash
 go install github.com/semonte/sisu@latest
 ```
 
-### Requirements
-
-**Linux:**
+Requires FUSE:
 ```bash
 sudo apt install fuse    # Ubuntu/Debian
 sudo yum install fuse    # RHEL/CentOS
 ```
 
-## Usage
+## Quick Start 🚀
 
 ```bash
 sisu
 ```
 
-This mounts your AWS resources to `~/.sisu/mnt` and opens a shell. Type `exit` to unmount.
+You're in. Your AWS is now at your fingertips:
 
 ```
 ~/.sisu/mnt/
@@ -34,92 +47,87 @@ This mounts your AWS resources to `~/.sisu/mnt` and opens a shell. Type `exit` t
 └── iam/
 ```
 
-### Options
+Type `exit` when done.
+
+## The Good Stuff 🔥
+
+### Find security issues in seconds
 
 ```bash
-sisu --profile myprofile    # Use specific AWS profile
-sisu --region us-west-2     # Use specific region
-sisu stop                   # Unmount
-```
-
-## Examples
-
-### Grep your infrastructure
-
-```bash
-# Find security groups allowing SSH
-grep -r '"FromPort": 22' vpc/*/security-groups/
-
-# Find all roles trusted by Lambda
-grep -l "lambda.amazonaws.com" iam/roles/*/info.json
-
-# Find who has AdministratorAccess
+# Who has admin access?
 grep -l "AdministratorAccess" iam/users/*/policies.json
 
-# Search SSM for database connections
-grep -r "postgres://" ssm/
+# Security groups with SSH open
+grep -r '"FromPort": 22' vpc/*/security-groups/
+
+# Roles that Lambda can assume
+grep -l "lambda.amazonaws.com" iam/roles/*/info.json
+
+# Secrets in SSM?
+grep -r "password" ssm/
 ```
 
-### Diff environments
+### Diff your environments
 
 ```bash
-# Compare security groups
-diff vpc/vpc-aaa/security-groups/sg-111.json vpc/vpc-bbb/security-groups/sg-222.json
-
-# Compare IAM roles
+# Why is prod broken but staging works?
 diff iam/roles/prod-api/info.json iam/roles/staging-api/info.json
+
+# Security group drift
+diff vpc/vpc-prod/security-groups/sg-xxx.json vpc/vpc-staging/security-groups/sg-yyy.json
 ```
 
-### Pipe to unix tools
+### Pipe to anything
 
 ```bash
 # Pretty print with jq
 cat iam/roles/my-role/info.json | jq '.AssumeRolePolicyDocument'
 
-# Count resources
+# Count your roles
 ls iam/roles/ | wc -l
+
+# Find untagged resources
+cat vpc/vpc-xxx/info.json | jq 'select(.Tags == null)'
 ```
 
-### Edit SSM parameters
+### Edit SSM like a file
 
 ```bash
-# Read
-cat ssm/myapp/database-url
-
-# Write
-echo "postgres://prod-db:5432" > ssm/database-url
-
-# Use your editor
-vim ssm/myapp/config
+cat ssm/myapp/database-url                         # read
+echo "postgres://prod:5432" > ssm/database-url     # write
+vim ssm/myapp/config                               # edit
 ```
 
-### S3 with standard commands
+### S3, the unix way
 
 ```bash
-# Copy files
-cp local-file.txt s3/my-bucket/backup/
-
-# Read logs
+cp local.txt s3/my-bucket/backup/
 cat s3/my-bucket/logs/app.log | grep ERROR
-
-# Delete
 rm s3/my-bucket/old-file.txt
 ```
 
-## Supported Services
+## Options ⚙️
+
+```bash
+sisu --profile prod       # AWS profile
+sisu --region us-west-2   # AWS region
+sisu stop                 # Unmount
+```
+
+## What's Supported ✅
 
 | Service | Read | Write | Delete |
-|---------|------|-------|--------|
-| S3 | yes | yes | yes |
-| SSM Parameter Store | yes | yes | yes |
-| VPC (subnets, security groups, route tables) | yes | - | - |
-| IAM (users, roles, policies, groups) | yes | - | - |
+|---------|:----:|:-----:|:------:|
+| S3 | ✓ | ✓ | ✓ |
+| SSM Parameter Store | ✓ | ✓ | ✓ |
+| IAM (users, roles, policies, groups) | ✓ | - | - |
+| VPC (subnets, security groups, routes) | ✓ | - | - |
 
-## Notes
+## Tips 💡
 
-- Results are cached for 5 minutes to reduce API calls
-- S3 listings are limited to 100 items per directory
+- Results are cached for 5 minutes
+- S3 listings cap at 100 items per directory
 
-## License
+## License 📄
 
 MIT
