@@ -75,6 +75,12 @@ func NewSisuFS(cfg Config) (*SisuFS, error) {
 	}
 	fs.providers["lambda"] = lambdaProvider
 
+	ec2Provider, err := provider.NewEC2Provider(cfg.Profile, cfg.Region)
+	if err != nil {
+		return nil, err
+	}
+	fs.providers["ec2"] = ec2Provider
+
 	return fs, nil
 }
 

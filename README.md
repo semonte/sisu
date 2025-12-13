@@ -16,7 +16,7 @@ aws iam list-users --query 'Users[].UserName' --output text | \
 
 ## What is this? 🤔
 
-sisu mounts AWS resources as a local filesystem. Use the tools you already know - `grep`, `cat`, `diff`, `vim` - instead of wrestling with JSON and the AWS CLI. Currently supports S3, SSM, IAM, VPC, and Lambda.
+sisu mounts AWS resources as a local filesystem. Use the tools you already know - `grep`, `cat`, `diff`, `vim` - instead of wrestling with JSON and the AWS CLI. Currently supports S3, SSM, IAM, VPC, Lambda, and EC2.
 
 
 ## Install 📦
@@ -45,7 +45,8 @@ You're in. Your AWS is now at your fingertips:
 ├── ssm/
 ├── vpc/
 ├── iam/
-└── lambda/
+├── lambda/
+└── ec2/
 ```
 
 Type `exit` when done.
@@ -72,6 +73,12 @@ grep -r "PASSWORD\|SECRET\|API_KEY" lambda/*/env.json
 
 # Functions using deprecated runtimes
 grep -r "python3.8\|nodejs16" lambda/*/config.json
+
+# EC2 instances with public IPs
+grep -r "PublicIpAddress" ec2/*/info.json
+
+# Find stopped instances (wasting money?)
+grep -r '"Name": "stopped"' ec2/*/info.json
 ```
 
 ### Diff your environments
@@ -136,6 +143,7 @@ sisu stop                 # Unmount
 | IAM (users, roles, policies, groups) | ✓ | - | - |
 | VPC (subnets, security groups, routes) | ✓ | - | - |
 | Lambda (config, policy, env vars) | ✓ | - | - |
+| EC2 (instances, security groups, tags) | ✓ | - | - |
 
 ## Tips 💡
 
