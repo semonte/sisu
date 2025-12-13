@@ -16,7 +16,7 @@ aws iam list-users --query 'Users[].UserName' --output text | \
 
 ## What is this? 🤔
 
-sisu mounts AWS resources as a local filesystem. Use the tools you already know - `grep`, `cat`, `diff`, `vim` - instead of wrestling with JSON and the AWS CLI. Currently supports S3, SSM, IAM, and VPC.
+sisu mounts AWS resources as a local filesystem. Use the tools you already know - `grep`, `cat`, `diff`, `vim` - instead of wrestling with JSON and the AWS CLI. Currently supports S3, SSM, IAM, VPC, and Lambda.
 
 
 ## Install 📦
@@ -44,7 +44,8 @@ You're in. Your AWS is now at your fingertips:
 ├── s3/
 ├── ssm/
 ├── vpc/
-└── iam/
+├── iam/
+└── lambda/
 ```
 
 Type `exit` when done.
@@ -65,6 +66,12 @@ grep -l "lambda.amazonaws.com" iam/roles/*/info.json
 
 # Secrets in SSM?
 grep -r "password" ssm/
+
+# Lambda functions with secrets in env vars
+grep -r "PASSWORD\|SECRET\|API_KEY" lambda/*/env.json
+
+# Functions using deprecated runtimes
+grep -r "python3.8\|nodejs16" lambda/*/config.json
 ```
 
 ### Diff your environments
@@ -75,6 +82,9 @@ diff iam/roles/prod-api/info.json iam/roles/staging-api/info.json
 
 # Security group drift
 diff vpc/vpc-prod/security-groups/sg-xxx.json vpc/vpc-staging/security-groups/sg-yyy.json
+
+# Lambda config differences
+diff lambda/my-func-prod/config.json lambda/my-func-staging/config.json
 ```
 
 ### Pipe to anything
@@ -88,6 +98,9 @@ ls iam/roles/ | wc -l
 
 # Find untagged resources
 cat vpc/vpc-xxx/info.json | jq 'select(.Tags == null)'
+
+# List all Lambda runtimes in use
+grep -h "Runtime" lambda/*/config.json | sort | uniq -c
 ```
 
 ### Edit SSM like a file
@@ -122,6 +135,7 @@ sisu stop                 # Unmount
 | SSM Parameter Store | ✓ | ✓ | ✓ |
 | IAM (users, roles, policies, groups) | ✓ | - | - |
 | VPC (subnets, security groups, routes) | ✓ | - | - |
+| Lambda (config, policy, env vars) | ✓ | - | - |
 
 ## Tips 💡
 

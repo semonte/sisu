@@ -136,9 +136,7 @@ func runSisu(cmd *cobra.Command, args []string) error {
 	shellCmd.Stdout = os.Stdout
 	shellCmd.Stderr = os.Stderr
 
-	if err := shellCmd.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "Shell error: %v\n", err)
-	}
+	shellCmd.Run() // ignore exit status - it's just the shell's last command status
 
 	fmt.Println("\nUnmounting...")
 	server.Unmount()
