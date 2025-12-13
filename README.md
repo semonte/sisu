@@ -41,12 +41,19 @@ You're in. Your AWS is now at your fingertips:
 
 ```
 ~/.sisu/mnt/
-├── s3/
-├── ssm/
-├── vpc/
-├── iam/
-├── lambda/
-└── ec2/
+├── default/              # AWS profile
+│   ├── global/           # IAM, S3 (region-independent)
+│   │   ├── iam/
+│   │   └── s3/
+│   ├── us-east-1/        # Regional services
+│   │   ├── ec2/
+│   │   ├── lambda/
+│   │   ├── ssm/
+│   │   └── vpc/
+│   └── eu-west-1/
+│       └── ...
+├── prod/                 # Other profiles from ~/.aws/credentials
+└── staging/
 ```
 
 Type `exit` when done.
@@ -57,81 +64,83 @@ Type `exit` when done.
 
 ```bash
 # Who has admin access?
-grep -l "AdministratorAccess" iam/users/*/policies.json
+grep -l "AdministratorAccess" */global/iam/users/*/policies.json
 
 # Security groups with SSH open
-grep -r '"FromPort": 22' vpc/*/security-groups/
+grep -r '"FromPort": 22' */us-east-1/vpc/*/security-groups/
 
 # Roles that Lambda can assume
-grep -l "lambda.amazonaws.com" iam/roles/*/info.json
+grep -l "lambda.amazonaws.com" */global/iam/roles/*/info.json
 
 # Secrets in SSM?
-grep -r "password" ssm/
+grep -r "password" */us-east-1/ssm/
 
 # Lambda functions with secrets in env vars
-grep -r "PASSWORD\|SECRET\|API_KEY" lambda/*/env.json
+grep -r "PASSWORD\|SECRET\|API_KEY" */us-east-1/lambda/*/env.json
 
 # Functions using deprecated runtimes
-grep -r "python3.8\|nodejs16" lambda/*/config.json
+grep -r "python3.8\|nodejs16" */*/lambda/*/config.json
 
 # EC2 instances with public IPs
-grep -r "PublicIpAddress" ec2/*/info.json
+grep -r "PublicIpAddress" */*/ec2/*/info.json
 
 # Find stopped instances (wasting money?)
-grep -r '"Name": "stopped"' ec2/*/info.json
+grep -r '"Name": "stopped"' */*/ec2/*/info.json
 ```
 
 ### Diff your environments
 
 ```bash
-# Why is prod broken but staging works?
-diff iam/roles/prod-api/info.json iam/roles/staging-api/info.json
+# Compare IAM roles between accounts
+diff prod/global/iam/roles/api/info.json staging/global/iam/roles/api/info.json
 
-# Security group drift
-diff vpc/vpc-prod/security-groups/sg-xxx.json vpc/vpc-staging/security-groups/sg-yyy.json
+# Security group drift between regions
+diff default/us-east-1/vpc/vpc-xxx/security-groups/sg-xxx.json default/eu-west-1/vpc/vpc-yyy/security-groups/sg-yyy.json
 
 # Lambda config differences
-diff lambda/my-func-prod/config.json lambda/my-func-staging/config.json
+diff prod/us-east-1/lambda/my-func/config.json staging/us-east-1/lambda/my-func/config.json
 ```
 
 ### Pipe to anything
 
 ```bash
 # Pretty print with jq
-cat iam/roles/my-role/info.json | jq '.AssumeRolePolicyDocument'
+cat default/global/iam/roles/my-role/info.json | jq '.AssumeRolePolicyDocument'
 
 # Count your roles
-ls iam/roles/ | wc -l
+ls default/global/iam/roles/ | wc -l
 
 # Find untagged resources
-cat vpc/vpc-xxx/info.json | jq 'select(.Tags == null)'
+cat default/us-east-1/vpc/vpc-xxx/info.json | jq 'select(.Tags == null)'
 
 # List all Lambda runtimes in use
-grep -h "Runtime" lambda/*/config.json | sort | uniq -c
+grep -h "Runtime" */*/lambda/*/config.json | sort | uniq -c
 ```
 
 ### Edit SSM like a file
 
 ```bash
-cat ssm/myapp/database-url                         # read
-echo "postgres://prod:5432" > ssm/database-url     # write
-vim ssm/myapp/config                               # edit
+cat default/us-east-1/ssm/myapp/database-url          # read
+echo "postgres://prod:5432" > default/us-east-1/ssm/database-url  # write
+vim default/us-east-1/ssm/myapp/config                # edit
 ```
 
 ### S3, the unix way
 
 ```bash
-cp local.txt s3/my-bucket/backup/
-cat s3/my-bucket/logs/app.log | grep ERROR
-rm s3/my-bucket/old-file.txt
+cp local.txt default/global/s3/my-bucket/backup/
+cat default/global/s3/my-bucket/logs/app.log | grep ERROR
+rm default/global/s3/my-bucket/old-file.txt
 ```
 
 ## Options ⚙️
 
 ```bash
-sisu --profile prod       # AWS profile
-sisu --region us-west-2   # AWS region
-sisu stop                 # Unmount
+sisu                                    # Start at root
+sisu --profile prod                     # Start in prod/
+sisu --profile prod --region us-east-1  # Start in prod/us-east-1/
+sisu stop                               # Unmount
+sisu --debug                            # Debug logging
 ```
 
 ## What's Supported ✅

@@ -46,8 +46,8 @@ var stopCmd = &cobra.Command{
 }
 
 func init() {
-	rootCmd.PersistentFlags().StringVar(&profile, "profile", "", "AWS profile to use")
-	rootCmd.PersistentFlags().StringVar(&region, "region", "", "AWS region to use")
+	rootCmd.PersistentFlags().StringVar(&profile, "profile", "", "Start in this profile directory")
+	rootCmd.PersistentFlags().StringVar(&region, "region", "", "Start in this region directory")
 	rootCmd.PersistentFlags().StringVar(&mountpoint, "mountpoint", "", "Custom mount point (default: ~/.sisu/mnt)")
 	rootCmd.PersistentFlags().BoolVar(&debug, "debug", false, "Enable debug logging")
 
@@ -77,12 +77,6 @@ func runSisu(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Println("Mounting AWS resources to", mp+"...")
-	if profile != "" {
-		fmt.Println("Using profile:", profile)
-	}
-	if region != "" {
-		fmt.Println("Region:", region)
-	}
 	if debug {
 		fmt.Println("Debug mode: enabled")
 		cache.Debug = true
@@ -91,10 +85,7 @@ func runSisu(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create and mount the filesystem
-	sisuFS, err := fs.NewSisuFS(fs.Config{
-		Profile: profile,
-		Region:  region,
-	})
+	sisuFS, err := fs.NewSisuFS(fs.Config{})
 	if err != nil {
 		return fmt.Errorf("failed to initialize: %w", err)
 	}
@@ -106,6 +97,15 @@ func runSisu(cmd *cobra.Command, args []string) error {
 
 	fmt.Println("\nMounted! Opening new shell. Type 'exit' to unmount.")
 	fmt.Println()
+
+	// Determine starting directory
+	startDir := mp
+	if profile != "" {
+		startDir = filepath.Join(startDir, profile)
+		if region != "" {
+			startDir = filepath.Join(startDir, region)
+		}
+	}
 
 	// Spawn a new shell
 	shell := os.Getenv("SHELL")
@@ -121,11 +121,11 @@ func runSisu(cmd *cobra.Command, args []string) error {
 			PROMPT='sisu:%%~ $ '
 			cd %q
 			exec %s -i
-		`, mp, shell))
+		`, startDir, shell))
 	} else {
 		// For bash/sh, use --rcfile or PS1
 		shellCmd = exec.Command(shell, "--rcfile", "/dev/null", "-i")
-		shellCmd.Dir = mp
+		shellCmd.Dir = startDir
 		shellCmd.Env = append(os.Environ(),
 			"SISU_MOUNT="+mp,
 			`PS1=sisu:\w $ `,
