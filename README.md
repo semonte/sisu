@@ -62,7 +62,7 @@ Type `exit` when done.
 
 ## The Good Stuff 🔥
 
-### Find security issues in seconds
+### Explore your infrastructure
 
 ```bash
 # Who has admin access?
