@@ -30,8 +30,9 @@ type Config struct {
 
 // Global services that don't need a region
 var globalServices = map[string]bool{
-	"iam": true,
-	"s3":  true,
+	"iam":     true,
+	"s3":      true,
+	"route53": true,
 }
 
 // Regional services
@@ -166,6 +167,8 @@ func (f *SisuFS) getProvider(profile, region, service string) (provider.Provider
 		p, err = provider.NewEC2Provider(profileArg, region)
 	case "secrets":
 		p, err = provider.NewSecretsProvider(profileArg, region)
+	case "route53":
+		p, err = provider.NewRoute53Provider(profileArg)
 	default:
 		return nil, nil
 	}

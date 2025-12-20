@@ -16,7 +16,7 @@ aws iam list-users --query 'Users[].UserName' --output text | \
 
 ## What is this? 🤔
 
-sisu mounts AWS resources as a local filesystem. Use the tools you already know - `grep`, `cat`, `diff`, `vim` - instead of wrestling with JSON and the AWS CLI. Currently supports S3, SSM, IAM, VPC, Lambda, EC2, and Secrets Manager.
+sisu mounts AWS resources as a local filesystem. Use the tools you already know - `grep`, `cat`, `diff`, `vim` - instead of wrestling with JSON and the AWS CLI. Currently supports S3, SSM, IAM, VPC, Lambda, EC2, Secrets Manager, and Route 53.
 
 
 ## Install 📦
@@ -42,8 +42,9 @@ You're in. Your AWS is now at your fingertips:
 ```
 ~/.sisu/mnt/
 ├── default/              # AWS profile
-│   ├── global/           # IAM, S3 (region-independent)
+│   ├── global/           # IAM, S3, Route 53 (region-independent)
 │   │   ├── iam/
+│   │   ├── route53/
 │   │   └── s3/
 │   ├── us-east-1/        # Regional services
 │   │   ├── ec2/
@@ -93,6 +94,15 @@ ls */us-east-1/secrets/
 
 # Read a secret value
 cat default/us-east-1/secrets/myapp/database/value
+
+# List all DNS zones
+ls */global/route53/
+
+# View DNS records for a zone
+cat default/global/route53/example.com/records.json
+
+# Find all CNAME records
+grep -r '"Type": "CNAME"' */global/route53/*/records.json
 ```
 
 ### Diff your environments
@@ -161,6 +171,7 @@ sisu --debug                            # Debug logging
 | Lambda (config, policy, env vars) | ✓ | - | - |
 | EC2 (instances, security groups, tags) | ✓ | - | - |
 | Secrets Manager | ✓ | - | - |
+| Route 53 (zones, records) | ✓ | - | - |
 
 ## Tips 💡
 

@@ -36,6 +36,8 @@ github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.19.15 h1:wsSQ4SVz5YE1c
 github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.19.15/go.mod h1:I7sditnFGtYMIqPRU1QoHZAUrXkGp4SczmlLwrNPlD0=
 github.com/aws/aws-sdk-go-v2/service/lambda v1.87.0 h1:E5UXxF3vK3JuViwKCHfTJBIiFjvE4aytSucZjI2UAlQ=
 github.com/aws/aws-sdk-go-v2/service/lambda v1.87.0/go.mod h1:6f64Y1BEf6e1uCI+LtGbcZSKDK1GvgJ+iI4vP/bbE8s=
+github.com/aws/aws-sdk-go-v2/service/route53 v1.62.0 h1:80pDB3Tpmb2RCSZORrK9/3iQxsd+w6vSzVqpT1FGiwE=
+github.com/aws/aws-sdk-go-v2/service/route53 v1.62.0/go.mod h1:6EZUGGNLPLh5Unt30uEoA+KQcByERfXIkax9qrc80nA=
 github.com/aws/aws-sdk-go-v2/service/s3 v1.93.0 h1:IrbE3B8O9pm3lsg96AXIN5MXX4pECEuExh/A0Du3AuI=
 github.com/aws/aws-sdk-go-v2/service/s3 v1.93.0/go.mod h1:/sJLzHtiiZvs6C1RbxS/anSAFwZD6oC6M/kotQzOiLw=
 github.com/aws/aws-sdk-go-v2/service/secretsmanager v1.41.0 h1:vL6rQXcGtFv9q/9eRPdI+lL+dvTm7xKGZYSHEvmrpDk=
