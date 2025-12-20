@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"io"
 	"io/fs"
 	"time"
 )
@@ -12,6 +13,19 @@ type Entry struct {
 	IsDir   bool
 	Size    int64
 	ModTime time.Time
+}
+
+// StreamingFile represents a file that can be read incrementally
+type StreamingFile interface {
+	io.ReadCloser
+	// Size returns the current known size (-1 if unknown/streaming)
+	Size() int64
+}
+
+// StreamingProvider is implemented by providers that support streaming file reads
+type StreamingProvider interface {
+	// OpenStream opens a file for streaming read. Returns nil if not streamable.
+	OpenStream(ctx context.Context, path string) (StreamingFile, error)
 }
 
 // Provider defines the interface for AWS resource providers

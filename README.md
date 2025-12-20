@@ -16,7 +16,7 @@ aws iam list-users --query 'Users[].UserName' --output text | \
 
 ## What is this? 🤔
 
-sisu mounts AWS resources as a local filesystem. Use the tools you already know - `grep`, `cat`, `diff`, `vim` - instead of wrestling with JSON and the AWS CLI. Currently supports S3, SSM, IAM, VPC, Lambda, EC2, Secrets Manager, and Route 53.
+sisu mounts AWS resources as a local filesystem. Use the tools you already know - `grep`, `cat`, `diff`, `vim` - instead of wrestling with JSON and the AWS CLI. Currently supports S3, SSM, IAM, VPC, Lambda, EC2, Secrets Manager, Route 53, and CloudWatch Logs.
 
 
 ## Install 📦
@@ -49,6 +49,7 @@ You're in. Your AWS is now at your fingertips:
 │   ├── us-east-1/        # Regional services
 │   │   ├── ec2/
 │   │   ├── lambda/
+│   │   ├── logs/
 │   │   ├── secrets/
 │   │   ├── ssm/
 │   │   └── vpc/
@@ -103,6 +104,18 @@ cat default/global/route53/example.com/records.json
 
 # Find all CNAME records
 grep -r '"Type": "CNAME"' */global/route53/*/records.json
+
+# Grep recent logs for errors
+grep -i "error" default/us-east-1/logs/aws/lambda/my-function/latest.log
+
+# View all log groups
+ls */us-east-1/logs/
+
+# List log streams (shows 20 most recent)
+ls default/us-east-1/logs/aws/lambda/my-function/
+
+# View events from a specific stream
+cat default/us-east-1/logs/aws/lambda/my-function/2024_01_15_abc123/events.log
 ```
 
 ### Diff your environments
@@ -172,11 +185,37 @@ sisu --debug                            # Debug logging
 | EC2 (instances, security groups, tags) | ✓ | - | - |
 | Secrets Manager | ✓ | - | - |
 | Route 53 (zones, records) | ✓ | - | - |
+| CloudWatch Logs | ✓ | - | - |
+
+## How CloudWatch Logs Streaming Works 📜
+
+Log stream `events.log` files are streamed lazily from AWS rather than loaded entirely into memory:
+
+- **On-demand fetching**: Events are fetched in batches of 100 as you read through the file
+- **Memory efficient**: Only fetched content is buffered, not the entire stream
+- **Sequential reads**: Works with `cat`, `grep`, `head`, `less`
+
+```bash
+# Fetches only enough batches to find the match
+grep "ERROR" .../my-stream/events.log
+
+# Fetches just the first batch
+head -50 .../my-stream/events.log
+
+# Scroll through with on-demand loading
+less .../my-stream/events.log
+
+# Will fetch all events
+cat .../my-stream/events.log | wc -l
+```
+
+**Note:** `tail` does not work correctly with streaming files because it seeks to the end of the file, but the actual file size is unknown until fully loaded. Use `cat ... | tail` as a workaround.
 
 ## Tips 💡
 
 - Results are cached for 5 minutes
 - S3 listings cap at 100 items per directory
+- CloudWatch Logs fetches events in batches of 100
 
 ## License 📄
 

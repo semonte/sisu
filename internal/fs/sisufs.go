@@ -36,7 +36,7 @@ var globalServices = map[string]bool{
 }
 
 // Regional services
-var regionalServices = []string{"ssm", "vpc", "lambda", "ec2", "secrets"}
+var regionalServices = []string{"ssm", "vpc", "lambda", "ec2", "secrets", "logs"}
 
 // Writable services (support write/delete)
 var writableServices = map[string]bool{
@@ -169,6 +169,8 @@ func (f *SisuFS) getProvider(profile, region, service string) (provider.Provider
 		p, err = provider.NewSecretsProvider(profileArg, region)
 	case "route53":
 		p, err = provider.NewRoute53Provider(profileArg)
+	case "logs":
+		p, err = provider.NewLogsProvider(profileArg, region)
 	default:
 		return nil, nil
 	}
@@ -522,6 +524,23 @@ func (f *SisuFS) Open(name string, flags uint32, ctx *fuse.Context) (nodefs.File
 		return nil, fuse.ENOENT
 	}
 
+	// Check if provider supports streaming
+	if sp, ok := prov.(provider.StreamingProvider); ok {
+		sf, err := sp.OpenStream(context.Background(), subpath)
+		if err != nil {
+			if Debug {
+				log.Printf("[fs] Open: OpenStream failed for %q: %v", name, err)
+			}
+			return nil, fuse.EIO
+		}
+		if sf != nil {
+			if Debug {
+				log.Printf("[fs] Open: using streaming for %q", name)
+			}
+			return &streamingFuseFile{File: nodefs.NewDefaultFile(), stream: sf}, fuse.OK
+		}
+	}
+
 	data, err := prov.Read(context.Background(), subpath)
 	if err != nil {
 		if Debug {
@@ -597,6 +616,69 @@ func (f *sisuFile) Flush() fuse.Status                { return fuse.OK }
 func (f *sisuFile) Fsync(flags int) fuse.Status       { return fuse.OK }
 func (f *sisuFile) Truncate(size uint64) fuse.Status  { return fuse.Status(syscall.EROFS) }
 func (f *sisuFile) Write(data []byte, off int64) (uint32, fuse.Status) {
+	return 0, fuse.Status(syscall.EROFS)
+}
+
+// streamingFuseFile wraps a StreamingFile for FUSE
+type streamingFuseFile struct {
+	nodefs.File
+	stream      provider.StreamingFile
+	buffer      []byte
+	fullyLoaded bool
+	mu          sync.Mutex
+}
+
+func (f *streamingFuseFile) Read(buf []byte, off int64) (fuse.ReadResult, fuse.Status) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	// Fetch until we can satisfy the request or stream is exhausted
+	for int64(len(f.buffer)) < off+int64(len(buf)) && !f.fullyLoaded {
+		chunk := make([]byte, 64*1024)
+		n, err := f.stream.Read(chunk)
+		if n > 0 {
+			f.buffer = append(f.buffer, chunk[:n]...)
+		}
+		if err != nil || n == 0 {
+			f.fullyLoaded = true
+			break
+		}
+	}
+
+	// Return requested range
+	if off >= int64(len(f.buffer)) {
+		return fuse.ReadResultData(nil), fuse.OK
+	}
+	end := off + int64(len(buf))
+	if end > int64(len(f.buffer)) {
+		end = int64(len(f.buffer))
+	}
+	return fuse.ReadResultData(f.buffer[off:end]), fuse.OK
+}
+
+func (f *streamingFuseFile) GetAttr(out *fuse.Attr) fuse.Status {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	out.Mode = fuse.S_IFREG | 0444
+	if f.fullyLoaded {
+		out.Size = uint64(len(f.buffer))
+	} else {
+		// Report more than we have so tools like less know there's more to read
+		out.Size = uint64(len(f.buffer)) + 1024*1024
+	}
+	return fuse.OK
+}
+
+func (f *streamingFuseFile) Release() {
+	f.stream.Close()
+	f.buffer = nil
+}
+
+func (f *streamingFuseFile) Flush() fuse.Status                { return fuse.OK }
+func (f *streamingFuseFile) Fsync(flags int) fuse.Status       { return fuse.OK }
+func (f *streamingFuseFile) Truncate(size uint64) fuse.Status  { return fuse.Status(syscall.EROFS) }
+func (f *streamingFuseFile) Write(data []byte, off int64) (uint32, fuse.Status) {
 	return 0, fuse.Status(syscall.EROFS)
 }
 
