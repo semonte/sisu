@@ -35,7 +35,7 @@ var globalServices = map[string]bool{
 }
 
 // Regional services
-var regionalServices = []string{"ssm", "vpc", "lambda", "ec2"}
+var regionalServices = []string{"ssm", "vpc", "lambda", "ec2", "secrets"}
 
 // Writable services (support write/delete)
 var writableServices = map[string]bool{
@@ -164,6 +164,8 @@ func (f *SisuFS) getProvider(profile, region, service string) (provider.Provider
 		p, err = provider.NewLambdaProvider(profileArg, region)
 	case "ec2":
 		p, err = provider.NewEC2Provider(profileArg, region)
+	case "secrets":
+		p, err = provider.NewSecretsProvider(profileArg, region)
 	default:
 		return nil, nil
 	}

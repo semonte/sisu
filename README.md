@@ -16,7 +16,7 @@ aws iam list-users --query 'Users[].UserName' --output text | \
 
 ## What is this? 🤔
 
-sisu mounts AWS resources as a local filesystem. Use the tools you already know - `grep`, `cat`, `diff`, `vim` - instead of wrestling with JSON and the AWS CLI. Currently supports S3, SSM, IAM, VPC, Lambda, and EC2.
+sisu mounts AWS resources as a local filesystem. Use the tools you already know - `grep`, `cat`, `diff`, `vim` - instead of wrestling with JSON and the AWS CLI. Currently supports S3, SSM, IAM, VPC, Lambda, EC2, and Secrets Manager.
 
 
 ## Install 📦
@@ -48,6 +48,7 @@ You're in. Your AWS is now at your fingertips:
 │   ├── us-east-1/        # Regional services
 │   │   ├── ec2/
 │   │   ├── lambda/
+│   │   ├── secrets/
 │   │   ├── ssm/
 │   │   └── vpc/
 │   └── eu-west-1/
@@ -86,6 +87,12 @@ grep -r "PublicIpAddress" */*/ec2/*/info.json
 
 # Find stopped instances (wasting money?)
 grep -r '"Name": "stopped"' */*/ec2/*/info.json
+
+# View all secrets
+ls */us-east-1/secrets/
+
+# Read a secret value
+cat default/us-east-1/secrets/myapp/database/value
 ```
 
 ### Diff your environments
@@ -153,6 +160,7 @@ sisu --debug                            # Debug logging
 | VPC (subnets, security groups, routes) | ✓ | - | - |
 | Lambda (config, policy, env vars) | ✓ | - | - |
 | EC2 (instances, security groups, tags) | ✓ | - | - |
+| Secrets Manager | ✓ | - | - |
 
 ## Tips 💡
 
