@@ -211,6 +211,37 @@ cat .../my-stream/events.log | wc -l
 
 **Note:** `tail` does not work correctly with streaming files because it seeks to the end of the file, but the actual file size is unknown until fully loaded. Use `cat ... | tail` as a workaround.
 
+## Tools That Pair Well 🔧
+
+| Tool | What it does |
+|------|--------------|
+| [fzf](https://github.com/junegunn/fzf) | Fuzzy finder with preview |
+| [jq](https://jqlang.github.io/jq/) | JSON query/transform |
+| [difftastic](https://difftastic.wilfred.me.uk/) | Structural diff (understands JSON) |
+
+```bash
+# Browse and preview any resource interactively
+find */global/iam/roles -name "info.json" | fzf --preview 'jq . {}'
+
+# Find Lambda functions with high memory
+jq -r 'select(.MemorySize > 512) | .FunctionName' */us-east-1/lambda/*/config.json
+
+# Compare prod vs staging config
+difft prod/us-east-1/lambda/api/config.json staging/us-east-1/lambda/api/config.json
+```
+
+## Ask AI About Your Infrastructure 🤖
+
+Since it's just files, AI tools can read and analyze your AWS directly:
+
+```bash
+cd ~/.sisu/mnt && claude
+
+"Find security groups that allow SSH from 0.0.0.0/0"
+"Review IAM roles for overly permissive policies"
+"Compare prod and staging Lambda configs"
+```
+
 ## Tips 💡
 
 - Results are cached for 5 minutes
