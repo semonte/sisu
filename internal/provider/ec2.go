@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -16,8 +17,10 @@ import (
 // EC2Provider provides access to AWS EC2 instances
 type EC2Provider struct {
 	ReadOnlyProvider
-	client *ec2.Client
-	cache  *cache.Cache
+	client  *ec2.Client
+	cache   *cache.Cache
+	profile string
+	region  string
 }
 
 // NewEC2Provider creates a new EC2 provider
@@ -36,8 +39,10 @@ func NewEC2Provider(profile, region string) (*EC2Provider, error) {
 	}
 
 	return &EC2Provider{
-		client: ec2.NewFromConfig(cfg),
-		cache:  cache.New(5 * time.Minute),
+		client:  ec2.NewFromConfig(cfg),
+		cache:   cache.New(5 * time.Minute),
+		profile: profile,
+		region:  region,
 	}, nil
 }
 
@@ -71,6 +76,8 @@ func (p *EC2Provider) readDirUncached(ctx context.Context, path string) ([]Entry
 			{Name: "info.json", IsDir: false},
 			{Name: "security-groups.json", IsDir: false},
 			{Name: "tags.json", IsDir: false},
+			{Name: "console.log", IsDir: false},
+			{Name: "connect", IsDir: false, Executable: true},
 		}, nil
 	}
 
@@ -136,6 +143,10 @@ func (p *EC2Provider) readUncached(ctx context.Context, path string) ([]byte, er
 		return p.getSecurityGroups(ctx, instanceID)
 	case "tags.json":
 		return p.getTags(ctx, instanceID)
+	case "console.log":
+		return p.getConsoleOutput(ctx, instanceID)
+	case "connect":
+		return p.getConnectScript(ctx, instanceID)
 	}
 
 	return nil, fmt.Errorf("unknown file: %s", file)
@@ -195,6 +206,35 @@ func (p *EC2Provider) getTags(ctx context.Context, instanceID string) ([]byte, e
 	return json.MarshalIndent(tags, "", "  ")
 }
 
+func (p *EC2Provider) getConsoleOutput(ctx context.Context, instanceID string) ([]byte, error) {
+	resp, err := p.client.GetConsoleOutput(ctx, &ec2.GetConsoleOutputInput{
+		InstanceId: aws.String(instanceID),
+	})
+	if err != nil {
+		return nil, err
+	}
+	if resp.Output == nil {
+		return []byte("# No console output available\n"), nil
+	}
+	decoded, err := base64.StdEncoding.DecodeString(*resp.Output)
+	if err != nil {
+		return nil, err
+	}
+	return decoded, nil
+}
+
+func (p *EC2Provider) getConnectScript(ctx context.Context, instanceID string) ([]byte, error) {
+	cmd := fmt.Sprintf("aws ssm start-session --target %s", instanceID)
+	if p.profile != "" {
+		cmd += fmt.Sprintf(" --profile %s", p.profile)
+	}
+	if p.region != "" {
+		cmd += fmt.Sprintf(" --region %s", p.region)
+	}
+	script := fmt.Sprintf("#!/bin/bash\n%s\n", cmd)
+	return []byte(script), nil
+}
+
 func (p *EC2Provider) Stat(ctx context.Context, path string) (*Entry, error) {
 	cacheKey := "stat:" + path
 	if cached, ok := p.cache.Get(cacheKey); ok {
@@ -229,8 +269,10 @@ func (p *EC2Provider) statUncached(ctx context.Context, path string) (*Entry, er
 	// Files
 	if len(parts) == 2 {
 		switch parts[1] {
-		case "info.json", "security-groups.json", "tags.json":
+		case "info.json", "security-groups.json", "tags.json", "console.log":
 			return &Entry{Name: parts[1], IsDir: false, Size: 4096}, nil
+		case "connect":
+			return &Entry{Name: parts[1], IsDir: false, Size: 4096, Executable: true}, nil
 		}
 	}
 

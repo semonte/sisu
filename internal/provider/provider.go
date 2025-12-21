@@ -9,10 +9,11 @@ import (
 
 // Entry represents a file or directory entry
 type Entry struct {
-	Name    string
-	IsDir   bool
-	Size    int64
-	ModTime time.Time
+	Name       string
+	IsDir      bool
+	Size       int64
+	ModTime    time.Time
+	Executable bool
 }
 
 // StreamingFile represents a file that can be read incrementally

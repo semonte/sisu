@@ -345,7 +345,9 @@ func (f *SisuFS) GetAttr(name string, ctx *fuse.Context) (*fuse.Attr, fuse.Statu
 			attr.Mode = fuse.S_IFDIR | 0555
 		}
 	} else {
-		if writableServices[service] {
+		if entry.Executable {
+			attr.Mode = fuse.S_IFREG | 0555
+		} else if writableServices[service] {
 			attr.Mode = fuse.S_IFREG | 0644
 		} else {
 			attr.Mode = fuse.S_IFREG | 0444

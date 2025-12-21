@@ -90,6 +90,12 @@ grep -r "PublicIpAddress" */*/ec2/*/info.json
 # Find stopped instances (wasting money?)
 grep -r '"Name": "stopped"' */*/ec2/*/info.json
 
+# Connect to an EC2 instance via SSM (no SSH keys needed!)
+./default/us-east-1/ec2/i-abc123/connect
+
+# View EC2 boot logs and kernel messages
+cat default/us-east-1/ec2/i-abc123/console.log
+
 # View all secrets
 ls */us-east-1/secrets/
 
@@ -210,6 +216,26 @@ cat .../my-stream/events.log | wc -l
 ```
 
 **Note:** `tail` does not work correctly with streaming files because it seeks to the end of the file, but the actual file size is unknown until fully loaded. Use `cat ... | tail` as a workaround.
+
+## EC2 Connect & Console 🖥️
+
+Each EC2 instance has a `connect` script and `console.log`:
+
+```bash
+ls default/us-east-1/ec2/i-abc123/
+# info.json  security-groups.json  tags.json  console.log  connect
+```
+
+**Connect via SSM** (no SSH keys, no public IP needed):
+```bash
+./default/us-east-1/ec2/i-abc123/connect
+```
+Requires [Session Manager plugin](https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html).
+
+**View boot logs and kernel messages:**
+```bash
+cat default/us-east-1/ec2/i-abc123/console.log
+```
 
 ## Tools That Pair Well 🔧
 
