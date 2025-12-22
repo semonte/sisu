@@ -2,6 +2,8 @@
 
 **Your AWS, as a filesystem.**
 
+![Demo](docs/demo.gif)
+
 This:
 ```bash
 grep -l "AdministratorAccess" iam/users/*/policies.json
