@@ -219,13 +219,13 @@ cat .../my-stream/events.log | wc -l
 
 **Note:** `tail` does not work correctly with streaming files because it seeks to the end of the file, but the actual file size is unknown until fully loaded. Use `cat ... | tail` as a workaround.
 
-## EC2 Connect & Console 🖥️
+## EC2 Connect, Console & Remote Filesystem 🖥️
 
-Each EC2 instance has a `connect` script and `console.log`:
+Each EC2 instance exposes:
 
 ```bash
 ls default/us-east-1/ec2/i-abc123/
-# info.json  security-groups.json  tags.json  console.log  connect
+# info.json  security-groups.json  tags.json  console.log  connect  fs/
 ```
 
 **Connect via SSM** (no SSH keys, no public IP needed):
@@ -238,6 +238,24 @@ Requires [Session Manager plugin](https://docs.aws.amazon.com/systems-manager/la
 ```bash
 cat default/us-east-1/ec2/i-abc123/console.log
 ```
+
+**Browse the instance's filesystem remotely** (via SSM Run Command):
+```bash
+# List files on the instance
+ls default/us-east-1/ec2/i-abc123/fs/etc/
+
+# Read remote files
+cat default/us-east-1/ec2/i-abc123/fs/etc/hostname
+
+# Grep across remote logs
+grep ERROR default/us-east-1/ec2/i-abc123/fs/var/log/syslog
+
+# Compare configs between instances
+diff prod/us-east-1/ec2/i-111/fs/etc/nginx/nginx.conf \
+     prod/us-east-1/ec2/i-222/fs/etc/nginx/nginx.conf
+```
+
+No SSH keys or open ports needed - uses SSM Run Command under the hood.
 
 ## Tools That Pair Well 🔧
 

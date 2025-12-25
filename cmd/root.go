@@ -10,6 +10,7 @@ import (
 	"github.com/semonte/sisu/internal/cache"
 	"github.com/semonte/sisu/internal/fs"
 	"github.com/semonte/sisu/internal/provider"
+	"github.com/semonte/sisu/internal/tunnel"
 	"github.com/spf13/cobra"
 )
 
@@ -76,12 +77,11 @@ func runSisu(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("already mounted at %s, run 'sisu stop' first", mp)
 	}
 
-	fmt.Println("Mounting AWS resources to", mp+"...")
 	if debug {
-		fmt.Println("Debug mode: enabled")
 		cache.Debug = true
 		fs.Debug = true
 		provider.Debug = true
+		tunnel.Debug = true
 	}
 
 	// Create and mount the filesystem
@@ -95,7 +95,14 @@ func runSisu(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to mount: %w", err)
 	}
 
-	fmt.Println("\nMounted! Opening new shell. Type 'exit' to unmount.")
+	// Print startup banner
+	fmt.Println()
+	fmt.Println("\033[1;36m  sisu\033[0m - AWS as a filesystem")
+	fmt.Println()
+	fmt.Printf("  \033[1mMount:\033[0m    %s\n", mp)
+	fmt.Printf("  \033[1mServices:\033[0m ec2 · lambda · secrets · ssm · s3 · iam · vpc\n")
+	fmt.Println()
+	fmt.Println("  Type '\033[1mexit\033[0m' to unmount.")
 	fmt.Println()
 
 	// Determine starting directory
@@ -138,9 +145,10 @@ func runSisu(cmd *cobra.Command, args []string) error {
 
 	shellCmd.Run() // ignore exit status - it's just the shell's last command status
 
-	fmt.Println("\nUnmounting...")
+	fmt.Println()
+	fmt.Println("\033[1;36m  sisu\033[0m unmounted. See you next time!")
+	fmt.Println()
 	server.Unmount()
-	fmt.Println("Done.")
 
 	return nil
 }

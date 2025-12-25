@@ -42,6 +42,7 @@ var regionalServices = []string{"ssm", "vpc", "lambda", "ec2", "secrets", "logs"
 var writableServices = map[string]bool{
 	"s3":  true,
 	"ssm": true,
+	"ec2": true, // fs/ paths only, provider rejects others
 }
 
 // Default regions to show
@@ -403,6 +404,25 @@ func (f *SisuFS) Unlink(name string, ctx *fuse.Context) fuse.Status {
 	return fuse.OK
 }
 
+// Utimens sets file access and modification times
+func (f *SisuFS) Utimens(name string, Atime *time.Time, Mtime *time.Time, ctx *fuse.Context) fuse.Status {
+	if Debug {
+		log.Printf("[fs] Utimens: name=%q", name)
+	}
+
+	_, _, service, _, ok := f.parsePath(name)
+	if !ok {
+		return fuse.ENOENT
+	}
+
+	// Allow for writable services, no-op for timestamps
+	if writableServices[service] {
+		return fuse.OK
+	}
+
+	return fuse.Status(syscall.EROFS)
+}
+
 // OpenDir opens a directory for reading
 func (f *SisuFS) OpenDir(name string, ctx *fuse.Context) ([]fuse.DirEntry, fuse.Status) {
 	if Debug {
@@ -620,6 +640,9 @@ func (f *sisuFile) Truncate(size uint64) fuse.Status  { return fuse.Status(sysca
 func (f *sisuFile) Write(data []byte, off int64) (uint32, fuse.Status) {
 	return 0, fuse.Status(syscall.EROFS)
 }
+func (f *sisuFile) Utimens(atime *time.Time, mtime *time.Time) fuse.Status {
+	return fuse.OK
+}
 
 // streamingFuseFile wraps a StreamingFile for FUSE
 type streamingFuseFile struct {
@@ -683,6 +706,9 @@ func (f *streamingFuseFile) Truncate(size uint64) fuse.Status  { return fuse.Sta
 func (f *streamingFuseFile) Write(data []byte, off int64) (uint32, fuse.Status) {
 	return 0, fuse.Status(syscall.EROFS)
 }
+func (f *streamingFuseFile) Utimens(atime *time.Time, mtime *time.Time) fuse.Status {
+	return fuse.OK
+}
 
 // writeableSisuFile is a file that buffers writes and flushes to provider
 type writeableSisuFile struct {
@@ -734,5 +760,9 @@ func (f *writeableSisuFile) Truncate(size uint64) fuse.Status {
 	if size == 0 {
 		f.buf.Reset()
 	}
+	return fuse.OK
+}
+
+func (f *writeableSisuFile) Utimens(atime *time.Time, mtime *time.Time) fuse.Status {
 	return fuse.OK
 }
