@@ -100,7 +100,7 @@ func runSisu(cmd *cobra.Command, args []string) error {
 	fmt.Println("\033[1;36m  sisu\033[0m - AWS as a filesystem")
 	fmt.Println()
 	fmt.Printf("  \033[1mMount:\033[0m    %s\n", mp)
-	fmt.Printf("  \033[1mServices:\033[0m ec2 · lambda · secrets · ssm · s3 · iam · vpc\n")
+	fmt.Printf("  \033[1mServices:\033[0m ec2 · ecs · lambda · cloudfront · secrets · ssm · s3 · iam · vpc\n")
 	fmt.Println()
 	fmt.Println("  Type '\033[1mexit\033[0m' to unmount.")
 	fmt.Println()

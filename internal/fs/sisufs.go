@@ -36,7 +36,7 @@ var globalServices = map[string]bool{
 }
 
 // Regional services
-var regionalServices = []string{"ssm", "vpc", "lambda", "ec2", "secrets", "logs"}
+var regionalServices = []string{"ssm", "vpc", "lambda", "ec2", "secrets", "logs", "ecs", "cloudfront"}
 
 // Writable services (support write/delete)
 var writableServices = map[string]bool{
@@ -172,6 +172,10 @@ func (f *SisuFS) getProvider(profile, region, service string) (provider.Provider
 		p, err = provider.NewRoute53Provider(profileArg)
 	case "logs":
 		p, err = provider.NewLogsProvider(profileArg, region)
+	case "ecs":
+		p, err = provider.NewECSProvider(profileArg, region)
+	case "cloudfront":
+		p, err = provider.NewCloudFrontProvider(profileArg, region)
 	default:
 		return nil, nil
 	}

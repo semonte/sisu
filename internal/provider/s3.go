@@ -3,6 +3,7 @@ package provider
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"strings"
@@ -66,6 +67,13 @@ func (p *S3Provider) ReadDir(ctx context.Context, path string) ([]Entry, error) 
 		prefix := ""
 		if len(parts) > 1 {
 			prefix = parts[1]
+			// Handle .meta virtual directory
+			if prefix == ".meta" {
+				return []Entry{
+					{Name: "policy.json", IsDir: false, Size: 4096},
+					{Name: "public-access-block.json", IsDir: false, Size: 4096},
+				}, nil
+			}
 			if prefix != "" && !strings.HasSuffix(prefix, "/") {
 				prefix += "/"
 			}
@@ -106,6 +114,11 @@ const maxS3Entries = 100
 func (p *S3Provider) listObjects(ctx context.Context, bucket, prefix string) ([]Entry, error) {
 	var entries []Entry
 	truncated := false
+
+	// At bucket root, add .meta directory for bucket metadata
+	if prefix == "" {
+		entries = append(entries, Entry{Name: ".meta", IsDir: true})
+	}
 
 	resp, err := p.client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
 		Bucket:    aws.String(bucket),
@@ -181,6 +194,16 @@ func (p *S3Provider) Read(ctx context.Context, path string) ([]byte, error) {
 		return []byte(moreResultsMessage(maxS3Entries)), nil
 	}
 
+	// Handle virtual .meta/policy.json
+	if key == ".meta/policy.json" {
+		return p.getBucketPolicy(ctx, bucket)
+	}
+
+	// Handle virtual .meta/public-access-block.json
+	if key == ".meta/public-access-block.json" {
+		return p.getPublicAccessBlock(ctx, bucket)
+	}
+
 	resp, err := p.client.GetObject(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(bucket),
 		Key:    aws.String(key),
@@ -233,6 +256,23 @@ func (p *S3Provider) statUncached(ctx context.Context, path string) (*Entry, err
 			Name:  "_more_results.txt",
 			IsDir: false,
 			Size:  int64(len(moreResultsMessage(maxS3Entries))),
+		}, nil
+	}
+
+	// Handle virtual .meta directory
+	if key == ".meta" {
+		return &Entry{
+			Name:  ".meta",
+			IsDir: true,
+		}, nil
+	}
+
+	// Handle virtual .meta/policy.json and .meta/public-access-block.json
+	if key == ".meta/policy.json" || key == ".meta/public-access-block.json" {
+		return &Entry{
+			Name:  key,
+			IsDir: false,
+			Size:  4096,
 		}, nil
 	}
 
@@ -332,4 +372,54 @@ func (p *S3Provider) invalidateCache(path, bucket string) {
 	}
 	p.cache.Delete("readdir:" + parentPath)
 	p.cache.Delete("stat:" + path)
+}
+
+func (p *S3Provider) getBucketPolicy(ctx context.Context, bucket string) ([]byte, error) {
+	resp, err := p.client.GetBucketPolicy(ctx, &s3.GetBucketPolicyInput{
+		Bucket: aws.String(bucket),
+	})
+	if err != nil {
+		// No policy exists
+		if strings.Contains(err.Error(), "NoSuchBucketPolicy") {
+			return []byte("# No bucket policy configured\n"), nil
+		}
+		return nil, err
+	}
+
+	// Pretty-print the policy JSON
+	if resp.Policy != nil {
+		var prettyJSON bytes.Buffer
+		if err := json.Indent(&prettyJSON, []byte(*resp.Policy), "", "  "); err != nil {
+			return []byte(*resp.Policy), nil
+		}
+		return prettyJSON.Bytes(), nil
+	}
+
+	return []byte("# No bucket policy configured\n"), nil
+}
+
+func (p *S3Provider) getPublicAccessBlock(ctx context.Context, bucket string) ([]byte, error) {
+	resp, err := p.client.GetPublicAccessBlock(ctx, &s3.GetPublicAccessBlockInput{
+		Bucket: aws.String(bucket),
+	})
+	if err != nil {
+		// No public access block config
+		if strings.Contains(err.Error(), "NoSuchPublicAccessBlockConfiguration") {
+			return []byte("# No public access block configured (bucket may be public)\n"), nil
+		}
+		return nil, err
+	}
+
+	if resp.PublicAccessBlockConfiguration != nil {
+		config := resp.PublicAccessBlockConfiguration
+		result := map[string]bool{
+			"BlockPublicAcls":       aws.ToBool(config.BlockPublicAcls),
+			"IgnorePublicAcls":      aws.ToBool(config.IgnorePublicAcls),
+			"BlockPublicPolicy":     aws.ToBool(config.BlockPublicPolicy),
+			"RestrictPublicBuckets": aws.ToBool(config.RestrictPublicBuckets),
+		}
+		return json.MarshalIndent(result, "", "  ")
+	}
+
+	return []byte("# No public access block configured\n"), nil
 }

@@ -5,12 +5,14 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/semonte/sisu/internal/cache"
@@ -20,11 +22,12 @@ import (
 // EC2Provider provides access to AWS EC2 instances
 type EC2Provider struct {
 	ReadOnlyProvider
-	client    *ec2.Client
-	cache     *cache.Cache
-	tunnelMgr *tunnel.Manager
-	profile   string
-	region    string
+	client     *ec2.Client
+	logsClient *cloudwatchlogs.Client
+	cache      *cache.Cache
+	tunnelMgr  *tunnel.Manager
+	profile    string
+	region     string
 }
 
 // NewEC2Provider creates a new EC2 provider
@@ -43,11 +46,12 @@ func NewEC2Provider(profile, region string) (*EC2Provider, error) {
 	}
 
 	return &EC2Provider{
-		client:    ec2.NewFromConfig(cfg),
-		cache:     cache.New(5 * time.Minute),
-		tunnelMgr: tunnel.NewManager(profile, region),
-		profile:   profile,
-		region:    region,
+		client:     ec2.NewFromConfig(cfg),
+		logsClient: cloudwatchlogs.NewFromConfig(cfg),
+		cache:      cache.New(5 * time.Minute),
+		tunnelMgr:  tunnel.NewManager(profile, region),
+		profile:    profile,
+		region:     region,
 	}, nil
 }
 
@@ -84,6 +88,7 @@ func (p *EC2Provider) readDirUncached(ctx context.Context, path string) ([]Entry
 			{Name: "console.log", IsDir: false},
 			{Name: "connect", IsDir: false, Executable: true},
 			{Name: "fs", IsDir: true},
+			{Name: "logs", IsDir: true},
 		}, nil
 	}
 
@@ -96,6 +101,11 @@ func (p *EC2Provider) readDirUncached(ctx context.Context, path string) ([]Entry
 	if strings.HasPrefix(subPath, "fs/") {
 		remotePath := "/" + strings.TrimPrefix(subPath, "fs/")
 		return p.listRemoteDir(ctx, instanceID, remotePath)
+	}
+
+	// Handle logs/ paths - CloudWatch logs
+	if subPath == "logs" {
+		return p.listInstanceLogs(ctx, instanceID)
 	}
 
 	return nil, fmt.Errorf("unknown path: %s", path)
@@ -137,6 +147,73 @@ func (p *EC2Provider) listInstances(ctx context.Context) ([]Entry, error) {
 	return entries, nil
 }
 
+func (p *EC2Provider) listInstanceLogs(ctx context.Context, instanceID string) ([]Entry, error) {
+	// Just show latest.log - the read will try to find matching log groups
+	return []Entry{
+		{Name: "latest.log", IsDir: false},
+	}, nil
+}
+
+func (p *EC2Provider) getInstanceLogs(ctx context.Context, instanceID string) ([]byte, error) {
+	// Search for log groups that might belong to this instance
+	// Common patterns: containing instance ID, /ec2/, etc.
+	var logGroups []string
+
+	paginator := cloudwatchlogs.NewDescribeLogGroupsPaginator(p.logsClient, &cloudwatchlogs.DescribeLogGroupsInput{})
+	for paginator.HasMorePages() {
+		page, err := paginator.NextPage(ctx)
+		if err != nil {
+			break
+		}
+		for _, lg := range page.LogGroups {
+			name := aws.ToString(lg.LogGroupName)
+			// Check if log group name contains instance ID
+			if strings.Contains(name, instanceID) {
+				logGroups = append(logGroups, name)
+			}
+		}
+		// Limit search to first 100 groups to avoid long waits
+		if len(logGroups) > 0 {
+			break
+		}
+	}
+
+	if len(logGroups) == 0 {
+		return []byte(fmt.Sprintf("# No CloudWatch log groups found for instance %s\n# Tip: Use fs/var/log/ to access system logs via SSM\n", instanceID)), nil
+	}
+
+	// Get latest events from the first matching log group
+	logGroupName := logGroups[0]
+	startTime := time.Now().Add(-1 * time.Hour).UnixMilli()
+
+	resp, err := p.logsClient.FilterLogEvents(ctx, &cloudwatchlogs.FilterLogEventsInput{
+		LogGroupName: aws.String(logGroupName),
+		StartTime:    aws.Int64(startTime),
+		Limit:        aws.Int32(500),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get logs: %w", err)
+	}
+
+	var buf strings.Builder
+	buf.WriteString(fmt.Sprintf("# Log group: %s\n\n", logGroupName))
+
+	for _, event := range resp.Events {
+		ts := time.UnixMilli(aws.ToInt64(event.Timestamp)).Format("2006-01-02 15:04:05")
+		msg := aws.ToString(event.Message)
+		if !strings.HasSuffix(msg, "\n") {
+			msg += "\n"
+		}
+		buf.WriteString(fmt.Sprintf("[%s] %s", ts, msg))
+	}
+
+	if len(resp.Events) == 0 {
+		buf.WriteString("# No events in the last hour\n")
+	}
+
+	return []byte(buf.String()), nil
+}
+
 func (p *EC2Provider) Read(ctx context.Context, path string) ([]byte, error) {
 	cacheKey := "read:" + path
 	if cached, ok := p.cache.Get(cacheKey); ok {
@@ -176,6 +253,11 @@ func (p *EC2Provider) readUncached(ctx context.Context, path string) ([]byte, er
 			fmt.Printf("DEBUG EC2 Read: got %d bytes, err=%v\n", len(data), err)
 		}
 		return data, err
+	}
+
+	// Handle logs/ paths - CloudWatch logs
+	if subPath == "logs/latest.log" {
+		return p.getInstanceLogs(ctx, instanceID)
 	}
 
 	switch subPath {
@@ -222,7 +304,116 @@ func (p *EC2Provider) getSecurityGroups(ctx context.Context, instanceID string) 
 	}
 
 	instance := resp.Reservations[0].Instances[0]
-	return json.MarshalIndent(instance.SecurityGroups, "", "  ")
+
+	// Get security group IDs
+	var sgIDs []string
+	for _, sg := range instance.SecurityGroups {
+		sgIDs = append(sgIDs, aws.ToString(sg.GroupId))
+	}
+
+	if len(sgIDs) == 0 {
+		return []byte("[]"), nil
+	}
+
+	// Get full security group details
+	sgResp, err := p.client.DescribeSecurityGroups(ctx, &ec2.DescribeSecurityGroupsInput{
+		GroupIds: sgIDs,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	// Format the output
+	type Rule struct {
+		Protocol string `json:"Protocol"`
+		Port     string `json:"Port"`
+		Source   string `json:"Source,omitempty"`
+		Dest     string `json:"Destination,omitempty"`
+	}
+	type SGInfo struct {
+		GroupID      string `json:"GroupId"`
+		GroupName    string `json:"GroupName"`
+		Description  string `json:"Description"`
+		InboundRules []Rule `json:"InboundRules"`
+		OutboundRules []Rule `json:"OutboundRules"`
+	}
+
+	var result []SGInfo
+	for _, sg := range sgResp.SecurityGroups {
+		info := SGInfo{
+			GroupID:     aws.ToString(sg.GroupId),
+			GroupName:   aws.ToString(sg.GroupName),
+			Description: aws.ToString(sg.Description),
+		}
+
+		// Parse inbound rules
+		for _, perm := range sg.IpPermissions {
+			protocol := aws.ToString(perm.IpProtocol)
+			if protocol == "-1" {
+				protocol = "all"
+			}
+
+			port := "all"
+			if perm.FromPort != nil {
+				if perm.FromPort == perm.ToPort {
+					port = fmt.Sprintf("%d", *perm.FromPort)
+				} else {
+					port = fmt.Sprintf("%d-%d", *perm.FromPort, *perm.ToPort)
+				}
+			}
+
+			for _, ipRange := range perm.IpRanges {
+				info.InboundRules = append(info.InboundRules, Rule{
+					Protocol: protocol,
+					Port:     port,
+					Source:   aws.ToString(ipRange.CidrIp),
+				})
+			}
+			for _, sg := range perm.UserIdGroupPairs {
+				info.InboundRules = append(info.InboundRules, Rule{
+					Protocol: protocol,
+					Port:     port,
+					Source:   aws.ToString(sg.GroupId),
+				})
+			}
+		}
+
+		// Parse outbound rules
+		for _, perm := range sg.IpPermissionsEgress {
+			protocol := aws.ToString(perm.IpProtocol)
+			if protocol == "-1" {
+				protocol = "all"
+			}
+
+			port := "all"
+			if perm.FromPort != nil {
+				if perm.FromPort == perm.ToPort {
+					port = fmt.Sprintf("%d", *perm.FromPort)
+				} else {
+					port = fmt.Sprintf("%d-%d", *perm.FromPort, *perm.ToPort)
+				}
+			}
+
+			for _, ipRange := range perm.IpRanges {
+				info.OutboundRules = append(info.OutboundRules, Rule{
+					Protocol: protocol,
+					Port:     port,
+					Dest:     aws.ToString(ipRange.CidrIp),
+				})
+			}
+			for _, sg := range perm.UserIdGroupPairs {
+				info.OutboundRules = append(info.OutboundRules, Rule{
+					Protocol: protocol,
+					Port:     port,
+					Dest:     aws.ToString(sg.GroupId),
+				})
+			}
+		}
+
+		result = append(result, info)
+	}
+
+	return json.MarshalIndent(result, "", "  ")
 }
 
 func (p *EC2Provider) getTags(ctx context.Context, instanceID string) ([]byte, error) {
@@ -479,6 +670,14 @@ func (p *EC2Provider) statUncached(ctx context.Context, path string) (*Entry, er
 		return p.statRemotePath(ctx, instanceID, remotePath)
 	}
 
+	// Handle logs directory and logs/ paths
+	if subPath == "logs" {
+		return &Entry{Name: "logs", IsDir: true}, nil
+	}
+	if subPath == "logs/latest.log" {
+		return &Entry{Name: "latest.log", IsDir: false, Size: 4096}, nil
+	}
+
 	// Regular files
 	switch subPath {
 	case "info.json", "security-groups.json", "tags.json", "console.log":
@@ -525,4 +724,147 @@ func (p *EC2Provider) Delete(ctx context.Context, path string) error {
 	}
 
 	return nil
+}
+
+// streamingEC2LogFile implements StreamingFile for EC2 logs
+type streamingEC2LogFile struct {
+	client       *cloudwatchlogs.Client
+	logGroupName string
+	buffer       []byte
+	readOffset   int
+	nextToken    *string
+	fullyLoaded  bool
+	ctx          context.Context
+}
+
+// OpenStream opens a streaming file for logs/latest.log
+func (p *EC2Provider) OpenStream(ctx context.Context, path string) (StreamingFile, error) {
+	// Only stream logs/latest.log files
+	if !strings.HasSuffix(path, "/logs/latest.log") {
+		return nil, nil
+	}
+
+	parts := strings.Split(path, "/")
+	if len(parts) < 3 {
+		return nil, nil
+	}
+
+	instanceID := parts[0]
+
+	// Find a log group for this instance
+	logGroupName, err := p.findInstanceLogGroup(ctx, instanceID)
+	if err != nil || logGroupName == "" {
+		// No log group found - return a file with a message
+		return &streamingEC2LogFile{
+			client:      p.logsClient,
+			buffer:      []byte(fmt.Sprintf("# No CloudWatch log groups found for instance %s\n# Tip: Use fs/var/log/ to access system logs via SSM\n", instanceID)),
+			fullyLoaded: true,
+			ctx:         ctx,
+		}, nil
+	}
+
+	return &streamingEC2LogFile{
+		client:       p.logsClient,
+		logGroupName: logGroupName,
+		ctx:          ctx,
+	}, nil
+}
+
+func (p *EC2Provider) findInstanceLogGroup(ctx context.Context, instanceID string) (string, error) {
+	paginator := cloudwatchlogs.NewDescribeLogGroupsPaginator(p.logsClient, &cloudwatchlogs.DescribeLogGroupsInput{})
+	for paginator.HasMorePages() {
+		page, err := paginator.NextPage(ctx)
+		if err != nil {
+			return "", err
+		}
+		for _, lg := range page.LogGroups {
+			name := aws.ToString(lg.LogGroupName)
+			if strings.Contains(name, instanceID) {
+				return name, nil
+			}
+		}
+	}
+	return "", nil
+}
+
+func (f *streamingEC2LogFile) Read(p []byte) (int, error) {
+	// If we need more data and haven't loaded everything, fetch more
+	for f.readOffset >= len(f.buffer) && !f.fullyLoaded {
+		if err := f.fetchNextPage(); err != nil {
+			return 0, err
+		}
+	}
+
+	// EOF - fully loaded and nothing left to read
+	if f.readOffset >= len(f.buffer) {
+		return 0, io.EOF
+	}
+
+	n := copy(p, f.buffer[f.readOffset:])
+	f.readOffset += n
+
+	// If we've read everything and fully loaded, signal EOF with the data
+	if f.readOffset >= len(f.buffer) && f.fullyLoaded {
+		return n, io.EOF
+	}
+
+	return n, nil
+}
+
+func (f *streamingEC2LogFile) fetchNextPage() error {
+	if f.logGroupName == "" {
+		f.fullyLoaded = true
+		return nil
+	}
+
+	input := &cloudwatchlogs.FilterLogEventsInput{
+		LogGroupName: aws.String(f.logGroupName),
+		Limit:        aws.Int32(100),
+	}
+	if f.nextToken != nil {
+		input.NextToken = f.nextToken
+	} else {
+		// First request: get last hour
+		input.StartTime = aws.Int64(time.Now().Add(-1 * time.Hour).UnixMilli())
+	}
+
+	resp, err := f.client.FilterLogEvents(f.ctx, input)
+	if err != nil {
+		return err
+	}
+
+	// Add header on first page
+	if f.nextToken == nil && len(f.buffer) == 0 {
+		f.buffer = append(f.buffer, []byte(fmt.Sprintf("# Log group: %s\n\n", f.logGroupName))...)
+	}
+
+	// Append events to buffer
+	for _, event := range resp.Events {
+		ts := time.UnixMilli(aws.ToInt64(event.Timestamp)).Format("2006-01-02 15:04:05")
+		msg := aws.ToString(event.Message)
+		if !strings.HasSuffix(msg, "\n") {
+			msg += "\n"
+		}
+		line := fmt.Sprintf("[%s] %s", ts, msg)
+		f.buffer = append(f.buffer, []byte(line)...)
+	}
+
+	f.nextToken = resp.NextToken
+	if f.nextToken == nil {
+		f.fullyLoaded = true
+		if len(f.buffer) == 0 || (len(resp.Events) == 0 && f.nextToken == nil) {
+			f.buffer = append(f.buffer, []byte("# No events in the last hour\n")...)
+		}
+	}
+
+	return nil
+}
+
+func (f *streamingEC2LogFile) Close() error {
+	f.buffer = nil
+	return nil
+}
+
+func (f *streamingEC2LogFile) Size() int64 {
+	return -1 // Unknown size for streaming
 }
