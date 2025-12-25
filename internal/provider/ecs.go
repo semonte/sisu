@@ -219,10 +219,7 @@ func (p *ECSProvider) readUncached(ctx context.Context, path string) ([]byte, er
 		return p.getServiceInfo(ctx, parts[0], parts[1])
 	}
 
-	// cluster/service/logs/latest.log
-	if len(parts) == 4 && parts[2] == "logs" && parts[3] == "latest.log" {
-		return p.getServiceLogs(ctx, parts[0], parts[1])
-	}
+	// cluster/service/logs/latest.log - handled by OpenStream (streaming)
 
 	// cluster/service/tasks/task-id/info.json
 	if len(parts) == 5 && parts[2] == "tasks" && parts[4] == "info.json" {
@@ -279,58 +276,46 @@ func (p *ECSProvider) getTaskInfo(ctx context.Context, clusterName, taskID strin
 	return json.MarshalIndent(resp.Tasks[0], "", "  ")
 }
 
-func (p *ECSProvider) getServiceLogs(ctx context.Context, clusterName, serviceName string) ([]byte, error) {
-	// Try common log group patterns
-	logGroupPatterns := []string{
-		fmt.Sprintf("/ecs/%s", serviceName),
-		fmt.Sprintf("/ecs/%s/%s", clusterName, serviceName),
-		fmt.Sprintf("ecs/%s", serviceName),
-	}
-
-	for _, pattern := range logGroupPatterns {
-		resp, err := p.logsClient.DescribeLogGroups(ctx, &cloudwatchlogs.DescribeLogGroupsInput{
-			LogGroupNamePrefix: aws.String(pattern),
-			Limit:              aws.Int32(1),
-		})
-		if err == nil && len(resp.LogGroups) > 0 {
-			logGroupName := aws.ToString(resp.LogGroups[0].LogGroupName)
-			return p.fetchLogs(ctx, logGroupName)
-		}
-	}
-
-	return []byte(fmt.Sprintf("# No CloudWatch log groups found for service %s/%s\n# Check task definition for log configuration\n", clusterName, serviceName)), nil
-}
-
-func (p *ECSProvider) fetchLogs(ctx context.Context, logGroupName string) ([]byte, error) {
-	startTime := time.Now().Add(-1 * time.Hour).UnixMilli()
-
-	resp, err := p.logsClient.FilterLogEvents(ctx, &cloudwatchlogs.FilterLogEventsInput{
-		LogGroupName: aws.String(logGroupName),
-		StartTime:    aws.Int64(startTime),
-		Limit:        aws.Int32(500),
+func (p *ECSProvider) getLogGroupFromTaskDef(ctx context.Context, clusterName, serviceName string) (string, error) {
+	// Get service to find task definition ARN
+	svcResp, err := p.client.DescribeServices(ctx, &ecs.DescribeServicesInput{
+		Cluster:  aws.String(clusterName),
+		Services: []string{serviceName},
 	})
 	if err != nil {
-		return nil, err
+		return "", err
+	}
+	if len(svcResp.Services) == 0 {
+		return "", fmt.Errorf("service not found")
 	}
 
-	var buf strings.Builder
-	buf.WriteString(fmt.Sprintf("# Log group: %s\n\n", logGroupName))
+	taskDefArn := aws.ToString(svcResp.Services[0].TaskDefinition)
+	if taskDefArn == "" {
+		return "", fmt.Errorf("no task definition")
+	}
 
-	for _, event := range resp.Events {
-		ts := time.UnixMilli(aws.ToInt64(event.Timestamp)).Format("2006-01-02 15:04:05")
-		msg := aws.ToString(event.Message)
-		if !strings.HasSuffix(msg, "\n") {
-			msg += "\n"
+	// Describe task definition to get log configuration
+	taskDefResp, err := p.client.DescribeTaskDefinition(ctx, &ecs.DescribeTaskDefinitionInput{
+		TaskDefinition: aws.String(taskDefArn),
+	})
+	if err != nil {
+		return "", err
+	}
+
+	// Check container definitions for awslogs configuration
+	if taskDefResp.TaskDefinition != nil {
+		for _, container := range taskDefResp.TaskDefinition.ContainerDefinitions {
+			if container.LogConfiguration != nil && container.LogConfiguration.Options != nil {
+				if logGroup, ok := container.LogConfiguration.Options["awslogs-group"]; ok {
+					return logGroup, nil
+				}
+			}
 		}
-		buf.WriteString(fmt.Sprintf("[%s] %s", ts, msg))
 	}
 
-	if len(resp.Events) == 0 {
-		buf.WriteString("# No events in the last hour\n")
-	}
-
-	return []byte(buf.String()), nil
+	return "", fmt.Errorf("no log group in task definition")
 }
+
 
 func (p *ECSProvider) Stat(ctx context.Context, path string) (*Entry, error) {
 	cacheKey := "stat:" + path
@@ -418,7 +403,17 @@ func (p *ECSProvider) OpenStream(ctx context.Context, path string) (StreamingFil
 	clusterName := parts[0]
 	serviceName := parts[1]
 
-	// Find log group
+	// Try to get log group from task definition first
+	logGroupName, err := p.getLogGroupFromTaskDef(ctx, clusterName, serviceName)
+	if err == nil && logGroupName != "" {
+		return &streamingECSLogFile{
+			client:       p.logsClient,
+			logGroupName: logGroupName,
+			ctx:          ctx,
+		}, nil
+	}
+
+	// Fallback: try common log group patterns
 	logGroupPatterns := []string{
 		fmt.Sprintf("/ecs/%s", serviceName),
 		fmt.Sprintf("/ecs/%s/%s", clusterName, serviceName),
