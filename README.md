@@ -37,7 +37,11 @@ aws iam list-users --query 'Users[].UserName' --output text | \
 
 ## What is this? 🤔
 
-sisu mounts AWS resources as a local filesystem. Use the tools you already know - `grep`, `cat`, `diff`, `vim` - instead of wrestling with JSON and the AWS CLI. Currently supports S3, SSM, IAM, VPC, Lambda, EC2, ECS, CloudFront, Secrets Manager, Route 53, and CloudWatch Logs.
+sisu mounts AWS resources as a local filesystem. Use the tools you already know - `grep`, `cat`, `diff`, `vim` - instead of wrestling with JSON and the AWS CLI.
+
+**AI-friendly by design:** AI tools can't SSH into servers or run interactive AWS CLI sessions. But with sisu, your entire AWS infrastructure becomes simple file paths that any AI can read. Remote EC2 filesystems are accessible at `ec2/<instance>/fs/` - letting AI browse `/var/log`, `/etc`, and any file on your instances without SSH.
+
+Currently supports S3, SSM, IAM, VPC, Lambda, EC2, ECS, CloudFront, Secrets Manager, Route 53, and CloudWatch Logs.
 
 
 ## Install 📦
