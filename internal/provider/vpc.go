@@ -329,8 +329,12 @@ func (p *VPCProvider) statUncached(ctx context.Context, path string) (*Entry, er
 	if len(parts) == 2 {
 		switch parts[1] {
 		case "info.json":
-			// Size unknown until read, use placeholder that will be corrected by sisuFile.GetAttr
-			return &Entry{Name: "info.json", IsDir: false, Size: 4096}, nil
+			data, err := p.Read(ctx, path)
+			size := int64(4096)
+			if err == nil {
+				size = int64(len(data))
+			}
+			return &Entry{Name: "info.json", IsDir: false, Size: size}, nil
 		case "subnets", "route-tables", "security-groups":
 			return &Entry{Name: parts[1], IsDir: true}, nil
 		}
@@ -338,7 +342,12 @@ func (p *VPCProvider) statUncached(ctx context.Context, path string) (*Entry, er
 
 	// Resource files
 	if len(parts) == 3 && strings.HasSuffix(parts[2], ".json") {
-		return &Entry{Name: parts[2], IsDir: false, Size: 4096}, nil
+		data, err := p.Read(ctx, path)
+		size := int64(4096)
+		if err == nil {
+			size = int64(len(data))
+		}
+		return &Entry{Name: parts[2], IsDir: false, Size: size}, nil
 	}
 
 	return nil, fmt.Errorf("path not found: %s", path)

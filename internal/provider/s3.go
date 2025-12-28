@@ -69,9 +69,11 @@ func (p *S3Provider) ReadDir(ctx context.Context, path string) ([]Entry, error) 
 			prefix = parts[1]
 			// Handle .meta virtual directory
 			if prefix == ".meta" {
+				policyData, _ := p.getBucketPolicy(ctx, bucket)
+				accessBlockData, _ := p.getPublicAccessBlock(ctx, bucket)
 				return []Entry{
-					{Name: "policy.json", IsDir: false, Size: 4096},
-					{Name: "public-access-block.json", IsDir: false, Size: 4096},
+					{Name: "policy.json", IsDir: false, Size: int64(len(policyData))},
+					{Name: "public-access-block.json", IsDir: false, Size: int64(len(accessBlockData))},
 				}, nil
 			}
 			if prefix != "" && !strings.HasSuffix(prefix, "/") {
@@ -269,10 +271,15 @@ func (p *S3Provider) statUncached(ctx context.Context, path string) (*Entry, err
 
 	// Handle virtual .meta/policy.json and .meta/public-access-block.json
 	if key == ".meta/policy.json" || key == ".meta/public-access-block.json" {
+		data, err := p.Read(ctx, path)
+		size := int64(4096)
+		if err == nil {
+			size = int64(len(data))
+		}
 		return &Entry{
 			Name:  key,
 			IsDir: false,
-			Size:  4096,
+			Size:  size,
 		}, nil
 	}
 

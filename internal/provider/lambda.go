@@ -269,20 +269,39 @@ func (p *LambdaProvider) statUncached(ctx context.Context, path string) (*Entry,
 
 	// Function directory
 	if len(parts) == 1 {
-		_, err := p.client.GetFunction(ctx, &lambda.GetFunctionInput{
+		resp, err := p.client.GetFunction(ctx, &lambda.GetFunctionInput{
 			FunctionName: aws.String(parts[0]),
 		})
 		if err != nil {
 			return nil, fmt.Errorf("function not found: %s", parts[0])
 		}
-		return &Entry{Name: parts[0], IsDir: true}, nil
+		var modTime time.Time
+		if resp.Configuration != nil && resp.Configuration.LastModified != nil {
+			// LastModified is like "2024-01-15T10:30:00.000+0000"
+			modTime, _ = time.Parse("2006-01-02T15:04:05.000-0700", aws.ToString(resp.Configuration.LastModified))
+		}
+		return &Entry{Name: parts[0], IsDir: true, ModTime: modTime}, nil
 	}
 
 	// Files and directories under function
 	if len(parts) == 2 {
 		switch parts[1] {
 		case "config.json", "policy.json", "env.json":
-			return &Entry{Name: parts[1], IsDir: false, Size: 4096}, nil
+			// Get real size by reading the content
+			data, err := p.Read(ctx, path)
+			size := int64(4096)
+			if err == nil {
+				size = int64(len(data))
+			}
+			// Get modtime from function
+			var modTime time.Time
+			resp, err := p.client.GetFunction(ctx, &lambda.GetFunctionInput{
+				FunctionName: aws.String(parts[0]),
+			})
+			if err == nil && resp.Configuration != nil && resp.Configuration.LastModified != nil {
+				modTime, _ = time.Parse("2006-01-02T15:04:05.000-0700", aws.ToString(resp.Configuration.LastModified))
+			}
+			return &Entry{Name: parts[1], IsDir: false, Size: size, ModTime: modTime}, nil
 		case "logs":
 			return &Entry{Name: "logs", IsDir: true}, nil
 		}

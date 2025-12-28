@@ -338,8 +338,9 @@ func (t *Tunnel) Delete(remotePath string) error {
 }
 
 // Stat gets file info from the remote instance
+// Returns: "type size perms mtime path" (mtime is seconds since epoch)
 func (t *Tunnel) Stat(remotePath string) (string, error) {
-	output, err := t.Execute(fmt.Sprintf("sudo stat -c '%%F %%s %%a %%n' '%s' 2>/dev/null || echo 'SISU_ERROR: not found'", remotePath))
+	output, err := t.Execute(fmt.Sprintf("sudo stat -c '%%F %%s %%a %%Y %%n' '%s' 2>/dev/null || echo 'SISU_ERROR: not found'", remotePath))
 	if err != nil {
 		return "", err
 	}

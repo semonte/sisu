@@ -239,7 +239,21 @@ func (p *SecretsProvider) statUncached(ctx context.Context, path string) (*Entry
 	// Check if it's a file (info.json or value)
 	if strings.HasSuffix(path, "/info.json") || strings.HasSuffix(path, "/value") {
 		parts := strings.Split(path, "/")
-		return &Entry{Name: parts[len(parts)-1], IsDir: false, Size: 4096}, nil
+		secretName := strings.TrimSuffix(path, "/"+parts[len(parts)-1])
+		data, err := p.Read(ctx, path)
+		size := int64(4096)
+		if err == nil {
+			size = int64(len(data))
+		}
+		// Get modtime from secret metadata
+		var modTime time.Time
+		resp, err := p.client.DescribeSecret(ctx, &secretsmanager.DescribeSecretInput{
+			SecretId: aws.String(secretName),
+		})
+		if err == nil && resp.LastChangedDate != nil {
+			modTime = *resp.LastChangedDate
+		}
+		return &Entry{Name: parts[len(parts)-1], IsDir: false, Size: size, ModTime: modTime}, nil
 	}
 
 	// Check if it's an exact secret match
@@ -250,8 +264,15 @@ func (p *SecretsProvider) statUncached(ctx context.Context, path string) (*Entry
 
 	for _, secretName := range allSecrets {
 		if secretName == path {
-			// It's an actual secret - show as directory
-			return &Entry{Name: path, IsDir: true}, nil
+			// It's an actual secret - show as directory with modtime
+			var modTime time.Time
+			resp, err := p.client.DescribeSecret(ctx, &secretsmanager.DescribeSecretInput{
+				SecretId: aws.String(secretName),
+			})
+			if err == nil && resp.LastChangedDate != nil {
+				modTime = *resp.LastChangedDate
+			}
+			return &Entry{Name: path, IsDir: true, ModTime: modTime}, nil
 		}
 	}
 

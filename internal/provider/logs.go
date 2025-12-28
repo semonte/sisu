@@ -402,16 +402,10 @@ func (p *LogsProvider) statUncached(ctx context.Context, path string) (*Entry, e
 
 	// Check if it's a file
 	if strings.HasSuffix(path, "/info.json") ||
-		strings.HasSuffix(path, "/latest.log") {
+		strings.HasSuffix(path, "/latest.log") ||
+		strings.HasSuffix(path, "/events.log") {
 		parts := strings.Split(path, "/")
 		return &Entry{Name: parts[len(parts)-1], IsDir: false, Size: 4096}, nil
-	}
-
-	// events.log is streaming - report 1MB size
-	// Tools will seek based on this, but we fully load on any seek
-	if strings.HasSuffix(path, "/events.log") {
-		parts := strings.Split(path, "/")
-		return &Entry{Name: parts[len(parts)-1], IsDir: false, Size: 1024 * 1024}, nil
 	}
 
 	// Check if it's an exact log group match

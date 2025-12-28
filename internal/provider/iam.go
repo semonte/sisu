@@ -513,20 +513,68 @@ func (p *IAMProvider) statUncached(ctx context.Context, path string) (*Entry, er
 
 	// policies/<name>.json (flat structure)
 	if len(parts) == 2 && parts[0] == "policies" && strings.HasSuffix(parts[1], ".json") {
-		return &Entry{Name: parts[1], IsDir: false, Size: 4096}, nil
+		data, err := p.Read(ctx, path)
+		size := int64(4096)
+		if err == nil {
+			size = int64(len(data))
+		}
+		return &Entry{Name: parts[1], IsDir: false, Size: size}, nil
 	}
 
 	// users/<name>, roles/<name>, groups/<name> directories
 	if len(parts) == 2 {
 		switch parts[0] {
-		case "users", "roles", "groups":
-			return &Entry{Name: parts[1], IsDir: true}, nil
+		case "users":
+			resp, err := p.client.GetUser(ctx, &iam.GetUserInput{UserName: aws.String(parts[1])})
+			var modTime time.Time
+			if err == nil && resp.User != nil && resp.User.CreateDate != nil {
+				modTime = *resp.User.CreateDate
+			}
+			return &Entry{Name: parts[1], IsDir: true, ModTime: modTime}, nil
+		case "roles":
+			resp, err := p.client.GetRole(ctx, &iam.GetRoleInput{RoleName: aws.String(parts[1])})
+			var modTime time.Time
+			if err == nil && resp.Role != nil && resp.Role.CreateDate != nil {
+				modTime = *resp.Role.CreateDate
+			}
+			return &Entry{Name: parts[1], IsDir: true, ModTime: modTime}, nil
+		case "groups":
+			resp, err := p.client.GetGroup(ctx, &iam.GetGroupInput{GroupName: aws.String(parts[1])})
+			var modTime time.Time
+			if err == nil && resp.Group != nil && resp.Group.CreateDate != nil {
+				modTime = *resp.Group.CreateDate
+			}
+			return &Entry{Name: parts[1], IsDir: true, ModTime: modTime}, nil
 		}
 	}
 
 	// users/<name>/<file>.json, roles/<name>/<file>.json, groups/<name>/<file>.json
 	if len(parts) == 3 && strings.HasSuffix(parts[2], ".json") {
-		return &Entry{Name: parts[2], IsDir: false, Size: 4096}, nil
+		data, err := p.Read(ctx, path)
+		size := int64(4096)
+		if err == nil {
+			size = int64(len(data))
+		}
+		// Get modtime from parent resource
+		var modTime time.Time
+		switch parts[0] {
+		case "users":
+			resp, err := p.client.GetUser(ctx, &iam.GetUserInput{UserName: aws.String(parts[1])})
+			if err == nil && resp.User != nil && resp.User.CreateDate != nil {
+				modTime = *resp.User.CreateDate
+			}
+		case "roles":
+			resp, err := p.client.GetRole(ctx, &iam.GetRoleInput{RoleName: aws.String(parts[1])})
+			if err == nil && resp.Role != nil && resp.Role.CreateDate != nil {
+				modTime = *resp.Role.CreateDate
+			}
+		case "groups":
+			resp, err := p.client.GetGroup(ctx, &iam.GetGroupInput{GroupName: aws.String(parts[1])})
+			if err == nil && resp.Group != nil && resp.Group.CreateDate != nil {
+				modTime = *resp.Group.CreateDate
+			}
+		}
+		return &Entry{Name: parts[2], IsDir: false, Size: size, ModTime: modTime}, nil
 	}
 
 	return nil, fmt.Errorf("path not found: %s", path)

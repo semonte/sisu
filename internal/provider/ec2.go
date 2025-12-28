@@ -496,6 +496,8 @@ func (p *EC2Provider) listRemoteDir(ctx context.Context, instanceID, remotePath 
 
 		perms := fields[0]
 		sizeStr := fields[4]
+		// Date is in fields[5], fields[6], fields[7]: "Jan 1 12:00" or "Jan 1 2024"
+		dateStr := fields[5] + " " + fields[6] + " " + fields[7]
 		name := strings.Join(fields[8:], " ") // filename might have spaces
 
 		// Handle symlinks: "name -> target" - we only want the name
@@ -512,11 +514,22 @@ func (p *EC2Provider) listRemoteDir(ctx context.Context, instanceID, remotePath 
 		isDir := strings.HasPrefix(perms, "d") || strings.HasPrefix(perms, "l") // symlinks to dirs act as dirs
 		isExec := !isDir && len(perms) > 9 && (perms[3] == 'x' || perms[6] == 'x' || perms[9] == 'x')
 
+		// Parse modification time: "Jan 1 12:00" (recent) or "Jan 1 2024" (older)
+		var modTime time.Time
+		if t, err := time.Parse("Jan _2 15:04", dateStr); err == nil {
+			// Recent file - add current year
+			modTime = t.AddDate(time.Now().Year(), 0, 0)
+		} else if t, err := time.Parse("Jan _2 2006", dateStr); err == nil {
+			// Older file with year
+			modTime = t
+		}
+
 		entry := Entry{
 			Name:       name,
 			IsDir:      isDir,
 			Size:       size,
 			Executable: isExec,
+			ModTime:    modTime,
 		}
 		entries = append(entries, entry)
 
@@ -595,18 +608,19 @@ func (p *EC2Provider) statRemotePath(ctx context.Context, instanceID, remotePath
 		return nil, err
 	}
 
-	// Parse: "regular file 1234 644 /path/to/file" or "directory 4096 755 /path/to/dir"
+	// Parse: "regular file 1234 644 1703123456 /path/to/file" or "directory 4096 755 1703123456 /path/to/dir"
 	// Note: %F can be multi-word like "regular file", so parse from the end
 	fields := strings.Fields(output)
-	if len(fields) < 4 {
+	if len(fields) < 5 {
 		return nil, fmt.Errorf("unexpected stat output: %s", output)
 	}
 
-	// Parse from the end: path, perms, size, then type is everything before
+	// Parse from the end: path, mtime, perms, size, then type is everything before
 	name := fields[len(fields)-1]
-	perms, _ := strconv.ParseInt(fields[len(fields)-2], 8, 32)
-	size, _ := strconv.ParseInt(fields[len(fields)-3], 10, 64)
-	fileType := strings.Join(fields[:len(fields)-3], " ")
+	mtime, _ := strconv.ParseInt(fields[len(fields)-2], 10, 64)
+	perms, _ := strconv.ParseInt(fields[len(fields)-3], 8, 32)
+	size, _ := strconv.ParseInt(fields[len(fields)-4], 10, 64)
+	fileType := strings.Join(fields[:len(fields)-4], " ")
 
 	isDir := fileType == "directory"
 
@@ -624,6 +638,7 @@ func (p *EC2Provider) statRemotePath(ctx context.Context, instanceID, remotePath
 		IsDir:      isDir,
 		Size:       size,
 		Executable: isExec,
+		ModTime:    time.Unix(mtime, 0),
 	}, nil
 }
 
@@ -655,7 +670,11 @@ func (p *EC2Provider) statUncached(ctx context.Context, path string) (*Entry, er
 		if err != nil || len(resp.Reservations) == 0 || len(resp.Reservations[0].Instances) == 0 {
 			return nil, fmt.Errorf("instance not found: %s", parts[0])
 		}
-		return &Entry{Name: parts[0], IsDir: true}, nil
+		var modTime time.Time
+		if resp.Reservations[0].Instances[0].LaunchTime != nil {
+			modTime = *resp.Reservations[0].Instances[0].LaunchTime
+		}
+		return &Entry{Name: parts[0], IsDir: true, ModTime: modTime}, nil
 	}
 
 	instanceID := parts[0]
@@ -678,10 +697,25 @@ func (p *EC2Provider) statUncached(ctx context.Context, path string) (*Entry, er
 		return &Entry{Name: "latest.log", IsDir: false, Size: 4096}, nil
 	}
 
-	// Regular files
+	// Regular files - get real size and modtime from instance
 	switch subPath {
 	case "info.json", "security-groups.json", "tags.json", "console.log":
-		return &Entry{Name: subPath, IsDir: false, Size: 4096}, nil
+		data, err := p.Read(ctx, path)
+		size := int64(4096)
+		if err == nil {
+			size = int64(len(data))
+		}
+		// Get modtime from instance launch time
+		var modTime time.Time
+		resp, err := p.client.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
+			InstanceIds: []string{instanceID},
+		})
+		if err == nil && len(resp.Reservations) > 0 && len(resp.Reservations[0].Instances) > 0 {
+			if resp.Reservations[0].Instances[0].LaunchTime != nil {
+				modTime = *resp.Reservations[0].Instances[0].LaunchTime
+			}
+		}
+		return &Entry{Name: subPath, IsDir: false, Size: size, ModTime: modTime}, nil
 	case "connect":
 		return &Entry{Name: subPath, IsDir: false, Size: 4096, Executable: true}, nil
 	}

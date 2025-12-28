@@ -115,6 +115,14 @@ func (p *ECSProvider) readDirUncached(ctx context.Context, path string) ([]Entry
 	if len(parts) == 4 && parts[2] == "tasks" {
 		return []Entry{
 			{Name: "info.json", IsDir: false},
+			{Name: "logs", IsDir: true},
+		}, nil
+	}
+
+	// Task logs directory
+	if len(parts) == 5 && parts[2] == "tasks" && parts[4] == "logs" {
+		return []Entry{
+			{Name: "latest.log", IsDir: false},
 		}, nil
 	}
 
@@ -277,6 +285,19 @@ func (p *ECSProvider) getTaskInfo(ctx context.Context, clusterName, taskID strin
 }
 
 func (p *ECSProvider) getLogGroupFromTaskDef(ctx context.Context, clusterName, serviceName string) (string, error) {
+	cacheKey := fmt.Sprintf("loggroup:%s/%s", clusterName, serviceName)
+	if cached, ok := p.cache.Get(cacheKey); ok {
+		return cached.(string), nil
+	}
+
+	logGroup, err := p.getLogGroupFromTaskDefUncached(ctx, clusterName, serviceName)
+	if err == nil {
+		p.cache.Set(cacheKey, logGroup)
+	}
+	return logGroup, err
+}
+
+func (p *ECSProvider) getLogGroupFromTaskDefUncached(ctx context.Context, clusterName, serviceName string) (string, error) {
 	// Get service to find task definition ARN
 	svcResp, err := p.client.DescribeServices(ctx, &ecs.DescribeServicesInput{
 		Cluster:  aws.String(clusterName),
@@ -316,6 +337,74 @@ func (p *ECSProvider) getLogGroupFromTaskDef(ctx context.Context, clusterName, s
 	return "", fmt.Errorf("no log group in task definition")
 }
 
+// logConfig holds log configuration for a task
+type logConfig struct {
+	logGroup        string
+	logStreamPrefix string
+	containerName   string
+}
+
+func (p *ECSProvider) getLogConfigFromTask(ctx context.Context, clusterName, taskID string) (*logConfig, error) {
+	cacheKey := fmt.Sprintf("logconfig:%s/%s", clusterName, taskID)
+	if cached, ok := p.cache.Get(cacheKey); ok {
+		return cached.(*logConfig), nil
+	}
+
+	cfg, err := p.getLogConfigFromTaskUncached(ctx, clusterName, taskID)
+	if err == nil {
+		p.cache.Set(cacheKey, cfg)
+	}
+	return cfg, err
+}
+
+func (p *ECSProvider) getLogConfigFromTaskUncached(ctx context.Context, clusterName, taskID string) (*logConfig, error) {
+	// Get task to find task definition ARN
+	taskResp, err := p.client.DescribeTasks(ctx, &ecs.DescribeTasksInput{
+		Cluster: aws.String(clusterName),
+		Tasks:   []string{taskID},
+	})
+	if err != nil {
+		return nil, err
+	}
+	if len(taskResp.Tasks) == 0 {
+		return nil, fmt.Errorf("task not found")
+	}
+
+	taskDefArn := aws.ToString(taskResp.Tasks[0].TaskDefinitionArn)
+	if taskDefArn == "" {
+		return nil, fmt.Errorf("no task definition")
+	}
+
+	// Describe task definition to get log configuration
+	taskDefResp, err := p.client.DescribeTaskDefinition(ctx, &ecs.DescribeTaskDefinitionInput{
+		TaskDefinition: aws.String(taskDefArn),
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	// Check container definitions for awslogs configuration
+	if taskDefResp.TaskDefinition != nil {
+		for _, container := range taskDefResp.TaskDefinition.ContainerDefinitions {
+			if container.LogConfiguration != nil && container.LogConfiguration.Options != nil {
+				logGroup, hasGroup := container.LogConfiguration.Options["awslogs-group"]
+				if hasGroup {
+					cfg := &logConfig{
+						logGroup:      logGroup,
+						containerName: aws.ToString(container.Name),
+					}
+					if prefix, hasPrefix := container.LogConfiguration.Options["awslogs-stream-prefix"]; hasPrefix {
+						cfg.logStreamPrefix = prefix
+					}
+					return cfg, nil
+				}
+			}
+		}
+	}
+
+	return nil, fmt.Errorf("no log group in task definition")
+}
+
 
 func (p *ECSProvider) Stat(ctx context.Context, path string) (*Entry, error) {
 	cacheKey := "stat:" + path
@@ -345,16 +434,44 @@ func (p *ECSProvider) statUncached(ctx context.Context, path string) (*Entry, er
 	// cluster/info.json or cluster/service
 	if len(parts) == 2 {
 		if parts[1] == "info.json" {
-			return &Entry{Name: "info.json", IsDir: false, Size: 4096}, nil
+			data, err := p.Read(ctx, path)
+			size := int64(4096)
+			if err == nil {
+				size = int64(len(data))
+			}
+			return &Entry{Name: "info.json", IsDir: false, Size: size}, nil
 		}
-		return &Entry{Name: parts[1], IsDir: true}, nil
+		// Service directory - get modtime from latest deployment
+		resp, err := p.client.DescribeServices(ctx, &ecs.DescribeServicesInput{
+			Cluster:  aws.String(parts[0]),
+			Services: []string{parts[1]},
+		})
+		var modTime time.Time
+		if err == nil && len(resp.Services) > 0 && len(resp.Services[0].Deployments) > 0 {
+			modTime = aws.ToTime(resp.Services[0].Deployments[0].UpdatedAt)
+		}
+		return &Entry{Name: parts[1], IsDir: true, ModTime: modTime}, nil
 	}
 
 	// cluster/service/info.json, tasks, logs
 	if len(parts) == 3 {
 		switch parts[2] {
 		case "info.json":
-			return &Entry{Name: "info.json", IsDir: false, Size: 4096}, nil
+			data, err := p.Read(ctx, path)
+			size := int64(4096)
+			if err == nil {
+				size = int64(len(data))
+			}
+			// Get modtime from service deployment
+			var modTime time.Time
+			resp, err := p.client.DescribeServices(ctx, &ecs.DescribeServicesInput{
+				Cluster:  aws.String(parts[0]),
+				Services: []string{parts[1]},
+			})
+			if err == nil && len(resp.Services) > 0 && len(resp.Services[0].Deployments) > 0 {
+				modTime = aws.ToTime(resp.Services[0].Deployments[0].UpdatedAt)
+			}
+			return &Entry{Name: "info.json", IsDir: false, Size: size, ModTime: modTime}, nil
 		case "tasks", "logs":
 			return &Entry{Name: parts[2], IsDir: true}, nil
 		}
@@ -366,13 +483,46 @@ func (p *ECSProvider) statUncached(ctx context.Context, path string) (*Entry, er
 			return &Entry{Name: "latest.log", IsDir: false, Size: 4096}, nil
 		}
 		if parts[2] == "tasks" {
-			return &Entry{Name: parts[3], IsDir: true}, nil
+			// Task directory - get modtime from task StartedAt
+			resp, err := p.client.DescribeTasks(ctx, &ecs.DescribeTasksInput{
+				Cluster: aws.String(parts[0]),
+				Tasks:   []string{parts[3]},
+			})
+			var modTime time.Time
+			if err == nil && len(resp.Tasks) > 0 {
+				modTime = aws.ToTime(resp.Tasks[0].StartedAt)
+			}
+			return &Entry{Name: parts[3], IsDir: true, ModTime: modTime}, nil
 		}
 	}
 
-	// cluster/service/tasks/task-id/info.json
-	if len(parts) == 5 && parts[2] == "tasks" && parts[4] == "info.json" {
-		return &Entry{Name: "info.json", IsDir: false, Size: 4096}, nil
+	// cluster/service/tasks/task-id/info.json or logs
+	if len(parts) == 5 && parts[2] == "tasks" {
+		switch parts[4] {
+		case "info.json":
+			data, err := p.Read(ctx, path)
+			size := int64(4096)
+			if err == nil {
+				size = int64(len(data))
+			}
+			// Get modtime from task StartedAt
+			var modTime time.Time
+			resp, err := p.client.DescribeTasks(ctx, &ecs.DescribeTasksInput{
+				Cluster: aws.String(parts[0]),
+				Tasks:   []string{parts[3]},
+			})
+			if err == nil && len(resp.Tasks) > 0 {
+				modTime = aws.ToTime(resp.Tasks[0].StartedAt)
+			}
+			return &Entry{Name: "info.json", IsDir: false, Size: size, ModTime: modTime}, nil
+		case "logs":
+			return &Entry{Name: "logs", IsDir: true}, nil
+		}
+	}
+
+	// cluster/service/tasks/task-id/logs/latest.log
+	if len(parts) == 6 && parts[2] == "tasks" && parts[4] == "logs" && parts[5] == "latest.log" {
+		return &Entry{Name: "latest.log", IsDir: false, Size: 4096}, nil
 	}
 
 	return nil, fmt.Errorf("path not found: %s", path)
@@ -381,13 +531,14 @@ func (p *ECSProvider) statUncached(ctx context.Context, path string) (*Entry, er
 // Streaming support for logs
 
 type streamingECSLogFile struct {
-	client       *cloudwatchlogs.Client
-	logGroupName string
-	buffer       []byte
-	readOffset   int
-	nextToken    *string
-	fullyLoaded  bool
-	ctx          context.Context
+	client          *cloudwatchlogs.Client
+	logGroupName    string
+	logStreamPrefix string
+	buffer          []byte
+	readOffset      int
+	nextToken       *string
+	fullyLoaded     bool
+	ctx             context.Context
 }
 
 func (p *ECSProvider) OpenStream(ctx context.Context, path string) (StreamingFile, error) {
@@ -396,6 +547,13 @@ func (p *ECSProvider) OpenStream(ctx context.Context, path string) (StreamingFil
 	}
 
 	parts := strings.Split(path, "/")
+
+	// Task-level logs: cluster/service/tasks/task-id/logs/latest.log
+	if len(parts) == 6 && parts[2] == "tasks" {
+		return p.openTaskLogStream(ctx, parts[0], parts[3])
+	}
+
+	// Service-level logs: cluster/service/logs/latest.log
 	if len(parts) < 4 {
 		return nil, nil
 	}
@@ -443,6 +601,31 @@ func (p *ECSProvider) OpenStream(ctx context.Context, path string) (StreamingFil
 	}, nil
 }
 
+func (p *ECSProvider) openTaskLogStream(ctx context.Context, clusterName, taskID string) (StreamingFile, error) {
+	cfg, err := p.getLogConfigFromTask(ctx, clusterName, taskID)
+	if err != nil {
+		return &streamingECSLogFile{
+			client:      p.logsClient,
+			buffer:      []byte(fmt.Sprintf("# Could not get log config for task %s: %v\n", taskID, err)),
+			fullyLoaded: true,
+			ctx:         ctx,
+		}, nil
+	}
+
+	// Build log stream prefix: prefix/container-name/task-id
+	var logStreamPrefix string
+	if cfg.logStreamPrefix != "" {
+		logStreamPrefix = fmt.Sprintf("%s/%s/%s", cfg.logStreamPrefix, cfg.containerName, taskID)
+	}
+
+	return &streamingECSLogFile{
+		client:          p.logsClient,
+		logGroupName:    cfg.logGroup,
+		logStreamPrefix: logStreamPrefix,
+		ctx:             ctx,
+	}, nil
+}
+
 func (f *streamingECSLogFile) Read(p []byte) (int, error) {
 	for f.readOffset >= len(f.buffer) && !f.fullyLoaded {
 		if err := f.fetchNextPage(); err != nil {
@@ -476,6 +659,9 @@ func (f *streamingECSLogFile) fetchNextPage() error {
 		LogGroupName: aws.String(f.logGroupName),
 		Limit:        aws.Int32(100),
 	}
+	if f.logStreamPrefix != "" {
+		input.LogStreamNamePrefix = aws.String(f.logStreamPrefix)
+	}
 	if f.nextToken != nil {
 		input.NextToken = f.nextToken
 	} else {
@@ -488,7 +674,11 @@ func (f *streamingECSLogFile) fetchNextPage() error {
 	}
 
 	if isFirstPage && len(f.buffer) == 0 {
-		f.buffer = append(f.buffer, []byte(fmt.Sprintf("# Log group: %s\n\n", f.logGroupName))...)
+		if f.logStreamPrefix != "" {
+			f.buffer = append(f.buffer, []byte(fmt.Sprintf("# Log group: %s\n# Log stream: %s\n\n", f.logGroupName, f.logStreamPrefix))...)
+		} else {
+			f.buffer = append(f.buffer, []byte(fmt.Sprintf("# Log group: %s\n\n", f.logGroupName))...)
+		}
 	}
 
 	for _, event := range resp.Events {

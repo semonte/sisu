@@ -287,7 +287,12 @@ func (p *Route53Provider) statUncached(ctx context.Context, path string) (*Entry
 	if len(parts) == 2 {
 		switch parts[1] {
 		case "info.json", "records.json":
-			return &Entry{Name: parts[1], IsDir: false, Size: 4096}, nil
+			data, err := p.Read(ctx, path)
+			size := int64(4096)
+			if err == nil {
+				size = int64(len(data))
+			}
+			return &Entry{Name: parts[1], IsDir: false, Size: size}, nil
 		}
 	}
 

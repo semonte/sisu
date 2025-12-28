@@ -3,6 +3,7 @@ package fs
 import (
 	"bytes"
 	"context"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
@@ -563,7 +564,11 @@ func (f *SisuFS) Open(name string, flags uint32, ctx *fuse.Context) (nodefs.File
 			if Debug {
 				log.Printf("[fs] Open: using streaming for %q", name)
 			}
-			return &streamingFuseFile{File: nodefs.NewDefaultFile(), stream: sf}, fuse.OK
+			// Use FOPEN_DIRECT_IO to bypass kernel size caching - ensures tools read until EOF
+			return &nodefs.WithFlags{
+				File:      &streamingFuseFile{File: nodefs.NewDefaultFile(), stream: sf},
+				FuseFlags: fuse.FOPEN_DIRECT_IO,
+			}, fuse.OK
 		}
 	}
 
@@ -661,21 +666,42 @@ func (f *streamingFuseFile) Read(buf []byte, off int64) (fuse.ReadResult, fuse.S
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
+	if Debug {
+		log.Printf("[streaming] Read called: off=%d, bufLen=%d, currentBuffer=%d, fullyLoaded=%v",
+			off, len(buf), len(f.buffer), f.fullyLoaded)
+	}
+
 	// Fetch until we can satisfy the request or stream is exhausted
 	for int64(len(f.buffer)) < off+int64(len(buf)) && !f.fullyLoaded {
 		chunk := make([]byte, 64*1024)
 		n, err := f.stream.Read(chunk)
+		if Debug {
+			log.Printf("[streaming] stream.Read returned: n=%d, err=%v, totalBuffer=%d",
+				n, err, len(f.buffer)+n)
+		}
 		if n > 0 {
 			f.buffer = append(f.buffer, chunk[:n]...)
 		}
-		if err != nil || n == 0 {
+		if err == io.EOF {
+			if Debug {
+				log.Printf("[streaming] EOF received, marking fullyLoaded, totalBytes=%d", len(f.buffer))
+			}
 			f.fullyLoaded = true
+			break
+		}
+		if err != nil {
+			if Debug {
+				log.Printf("[streaming] error during read: %v", err)
+			}
 			break
 		}
 	}
 
 	// Return requested range
 	if off >= int64(len(f.buffer)) {
+		if Debug {
+			log.Printf("[streaming] returning empty (off=%d >= buffer=%d)", off, len(f.buffer))
+		}
 		return fuse.ReadResultData(nil), fuse.OK
 	}
 	end := off + int64(len(buf))

@@ -389,18 +389,90 @@ func (p *CloudFrontProvider) statUncached(ctx context.Context, path string) (*En
 		}
 	}
 
-	// distributions/<id> or functions/<name>
-	if len(parts) == 2 {
-		return &Entry{Name: parts[1], IsDir: true}, nil
+	// distributions/<id>
+	if len(parts) == 2 && parts[0] == "distributions" {
+		distID := parts[1]
+		resp, err := p.client.GetDistribution(ctx, &cloudfront.GetDistributionInput{
+			Id: aws.String(distID),
+		})
+		if err == nil && resp.Distribution != nil {
+			modTime := aws.ToTime(resp.Distribution.LastModifiedTime)
+			return &Entry{Name: distID, IsDir: true, ModTime: modTime}, nil
+		}
+		return &Entry{Name: distID, IsDir: true}, nil
 	}
 
-	// distributions/<id>/info.json, origins.json or functions/<name>/code.js, config.json, logs
-	if len(parts) == 3 {
-		switch parts[2] {
-		case "info.json", "origins.json", "code.js", "config.json":
-			return &Entry{Name: parts[2], IsDir: false, Size: 4096}, nil
-		case "logs":
+	// functions/<name>
+	if len(parts) == 2 && parts[0] == "functions" {
+		funcName := parts[1]
+		resp, err := p.client.DescribeFunction(ctx, &cloudfront.DescribeFunctionInput{
+			Name: aws.String(funcName),
+		})
+		if err == nil && resp.FunctionSummary != nil && resp.FunctionSummary.FunctionMetadata != nil {
+			modTime := aws.ToTime(resp.FunctionSummary.FunctionMetadata.LastModifiedTime)
+			return &Entry{Name: funcName, IsDir: true, ModTime: modTime}, nil
+		}
+		return &Entry{Name: funcName, IsDir: true}, nil
+	}
+
+	// distributions/<id>/info.json or origins.json
+	if len(parts) == 3 && parts[0] == "distributions" {
+		distID := parts[1]
+		fileName := parts[2]
+
+		resp, err := p.client.GetDistribution(ctx, &cloudfront.GetDistributionInput{
+			Id: aws.String(distID),
+		})
+		if err == nil && resp.Distribution != nil {
+			modTime := aws.ToTime(resp.Distribution.LastModifiedTime)
+			// Get actual size by reading the content
+			data, err := p.Read(ctx, path)
+			size := int64(4096)
+			if err == nil {
+				size = int64(len(data))
+			}
+			switch fileName {
+			case "info.json", "origins.json":
+				return &Entry{Name: fileName, IsDir: false, Size: size, ModTime: modTime}, nil
+			}
+		}
+	}
+
+	// functions/<name>/code.js, config.json, logs
+	if len(parts) == 3 && parts[0] == "functions" {
+		funcName := parts[1]
+		fileName := parts[2]
+
+		if fileName == "logs" {
 			return &Entry{Name: "logs", IsDir: true}, nil
+		}
+
+		resp, err := p.client.DescribeFunction(ctx, &cloudfront.DescribeFunctionInput{
+			Name: aws.String(funcName),
+		})
+		if err == nil && resp.FunctionSummary != nil && resp.FunctionSummary.FunctionMetadata != nil {
+			modTime := aws.ToTime(resp.FunctionSummary.FunctionMetadata.LastModifiedTime)
+
+			switch fileName {
+			case "code.js":
+				// Get actual code size
+				codeResp, err := p.client.GetFunction(ctx, &cloudfront.GetFunctionInput{
+					Name: aws.String(funcName),
+				})
+				size := int64(4096)
+				if err == nil && codeResp.FunctionCode != nil {
+					size = int64(len(codeResp.FunctionCode))
+				}
+				return &Entry{Name: fileName, IsDir: false, Size: size, ModTime: modTime}, nil
+			case "config.json":
+				// Get actual config size
+				data, err := p.Read(ctx, path)
+				size := int64(256)
+				if err == nil {
+					size = int64(len(data))
+				}
+				return &Entry{Name: fileName, IsDir: false, Size: size, ModTime: modTime}, nil
+			}
 		}
 	}
 
