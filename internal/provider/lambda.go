@@ -114,10 +114,18 @@ func (p *LambdaProvider) listFunctions(ctx context.Context) ([]Entry, error) {
 		}
 
 		for _, fn := range resp.Functions {
-			entries = append(entries, Entry{
-				Name:  aws.ToString(fn.FunctionName),
-				IsDir: true,
-			})
+			var modTime time.Time
+			if fn.LastModified != nil {
+				modTime, _ = time.Parse("2006-01-02T15:04:05.000-0700", aws.ToString(fn.LastModified))
+			}
+			entry := Entry{
+				Name:    aws.ToString(fn.FunctionName),
+				IsDir:   true,
+				ModTime: modTime,
+			}
+			entries = append(entries, entry)
+			// Pre-cache stat to avoid extra API call
+			p.cache.Set("stat:"+aws.ToString(fn.FunctionName), &entry)
 		}
 
 		if resp.NextMarker == nil {

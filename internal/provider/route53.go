@@ -94,10 +94,13 @@ func (p *Route53Provider) listZones(ctx context.Context) ([]Entry, error) {
 		for _, zone := range resp.HostedZones {
 			// Use zone name, trim trailing dot
 			name := strings.TrimSuffix(aws.ToString(zone.Name), ".")
-			entries = append(entries, Entry{
+			entry := Entry{
 				Name:  name,
 				IsDir: true,
-			})
+			}
+			entries = append(entries, entry)
+			// Pre-cache stat to avoid extra API call
+			p.cache.Set("stat:"+name, &entry)
 		}
 
 		if !resp.IsTruncated {

@@ -121,10 +121,14 @@ func (p *CloudFrontProvider) listDistributions(ctx context.Context) ([]Entry, er
 
 		if page.DistributionList != nil {
 			for _, dist := range page.DistributionList.Items {
-				entries = append(entries, Entry{
-					Name:  aws.ToString(dist.Id),
-					IsDir: true,
-				})
+				entry := Entry{
+					Name:    aws.ToString(dist.Id),
+					IsDir:   true,
+					ModTime: aws.ToTime(dist.LastModifiedTime),
+				}
+				entries = append(entries, entry)
+				// Pre-cache stat to avoid extra API call
+				p.cache.Set("stat:distributions/"+aws.ToString(dist.Id), &entry)
 			}
 		}
 	}
@@ -146,10 +150,18 @@ func (p *CloudFrontProvider) listFunctions(ctx context.Context) ([]Entry, error)
 			name := aws.ToString(fn.Name)
 			if !seen[name] {
 				seen[name] = true
-				entries = append(entries, Entry{
-					Name:  name,
-					IsDir: true,
-				})
+				var modTime time.Time
+				if fn.FunctionMetadata != nil {
+					modTime = aws.ToTime(fn.FunctionMetadata.LastModifiedTime)
+				}
+				entry := Entry{
+					Name:    name,
+					IsDir:   true,
+					ModTime: modTime,
+				}
+				entries = append(entries, entry)
+				// Pre-cache stat to avoid extra API call
+				p.cache.Set("stat:functions/"+name, &entry)
 			}
 		}
 	}

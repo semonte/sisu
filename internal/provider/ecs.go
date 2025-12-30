@@ -143,10 +143,13 @@ func (p *ECSProvider) listClusters(ctx context.Context) ([]Entry, error) {
 			// Extract cluster name from ARN
 			parts := strings.Split(arn, "/")
 			name := parts[len(parts)-1]
-			entries = append(entries, Entry{
+			entry := Entry{
 				Name:  name,
 				IsDir: true,
-			})
+			}
+			entries = append(entries, entry)
+			// Pre-cache stat to avoid extra API call
+			p.cache.Set("stat:"+name, &entry)
 		}
 	}
 
@@ -155,6 +158,7 @@ func (p *ECSProvider) listClusters(ctx context.Context) ([]Entry, error) {
 
 func (p *ECSProvider) listServices(ctx context.Context, clusterName string) ([]Entry, error) {
 	var entries []Entry
+	var serviceArns []string
 
 	paginator := ecs.NewListServicesPaginator(p.client, &ecs.ListServicesInput{
 		Cluster: aws.String(clusterName),
@@ -164,14 +168,45 @@ func (p *ECSProvider) listServices(ctx context.Context, clusterName string) ([]E
 		if err != nil {
 			return nil, err
 		}
+		serviceArns = append(serviceArns, page.ServiceArns...)
+	}
 
-		for _, arn := range page.ServiceArns {
-			parts := strings.Split(arn, "/")
-			name := parts[len(parts)-1]
-			entries = append(entries, Entry{
-				Name:  name,
-				IsDir: true,
-			})
+	// Batch describe services to get deployment times (max 10 per call)
+	for i := 0; i < len(serviceArns); i += 10 {
+		end := i + 10
+		if end > len(serviceArns) {
+			end = len(serviceArns)
+		}
+		batch := serviceArns[i:end]
+
+		resp, err := p.client.DescribeServices(ctx, &ecs.DescribeServicesInput{
+			Cluster:  aws.String(clusterName),
+			Services: batch,
+		})
+		if err != nil {
+			// Fall back to basic entries without modtime
+			for _, arn := range batch {
+				parts := strings.Split(arn, "/")
+				name := parts[len(parts)-1]
+				entries = append(entries, Entry{Name: name, IsDir: true})
+			}
+			continue
+		}
+
+		for _, svc := range resp.Services {
+			name := aws.ToString(svc.ServiceName)
+			var modTime time.Time
+			if len(svc.Deployments) > 0 && svc.Deployments[0].UpdatedAt != nil {
+				modTime = *svc.Deployments[0].UpdatedAt
+			}
+			entry := Entry{
+				Name:    name,
+				IsDir:   true,
+				ModTime: modTime,
+			}
+			entries = append(entries, entry)
+			// Pre-cache stat to avoid extra API call
+			p.cache.Set("stat:"+clusterName+"/"+name, &entry)
 		}
 	}
 
@@ -189,13 +224,40 @@ func (p *ECSProvider) listTasks(ctx context.Context, clusterName, serviceName st
 		return nil, err
 	}
 
-	for _, arn := range resp.TaskArns {
-		parts := strings.Split(arn, "/")
+	if len(resp.TaskArns) == 0 {
+		return entries, nil
+	}
+
+	// Batch describe tasks to get StartedAt times (max 100 per call)
+	descResp, err := p.client.DescribeTasks(ctx, &ecs.DescribeTasksInput{
+		Cluster: aws.String(clusterName),
+		Tasks:   resp.TaskArns,
+	})
+	if err != nil {
+		// Fall back to basic entries without modtime
+		for _, arn := range resp.TaskArns {
+			parts := strings.Split(arn, "/")
+			taskID := parts[len(parts)-1]
+			entries = append(entries, Entry{Name: taskID, IsDir: true})
+		}
+		return entries, nil
+	}
+
+	for _, task := range descResp.Tasks {
+		parts := strings.Split(aws.ToString(task.TaskArn), "/")
 		taskID := parts[len(parts)-1]
-		entries = append(entries, Entry{
-			Name:  taskID,
-			IsDir: true,
-		})
+		var modTime time.Time
+		if task.StartedAt != nil {
+			modTime = *task.StartedAt
+		}
+		entry := Entry{
+			Name:    taskID,
+			IsDir:   true,
+			ModTime: modTime,
+		}
+		entries = append(entries, entry)
+		// Pre-cache stat to avoid extra API call
+		p.cache.Set("stat:"+clusterName+"/"+serviceName+"/tasks/"+taskID, &entry)
 	}
 
 	return entries, nil

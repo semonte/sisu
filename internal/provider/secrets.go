@@ -139,7 +139,19 @@ func (p *SecretsProvider) listAllSecrets(ctx context.Context) ([]string, error) 
 		}
 
 		for _, secret := range resp.SecretList {
-			secrets = append(secrets, aws.ToString(secret.Name))
+			name := aws.ToString(secret.Name)
+			secrets = append(secrets, name)
+			// Pre-cache stat with modtime to avoid extra DescribeSecret call
+			var modTime time.Time
+			if secret.LastChangedDate != nil {
+				modTime = *secret.LastChangedDate
+			}
+			entry := Entry{
+				Name:    name,
+				IsDir:   true,
+				ModTime: modTime,
+			}
+			p.cache.Set("stat:"+name, &entry)
 		}
 
 		if resp.NextToken == nil {

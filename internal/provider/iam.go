@@ -111,10 +111,18 @@ func (p *IAMProvider) listUsers(ctx context.Context) ([]Entry, error) {
 			return nil, err
 		}
 		for _, user := range page.Users {
-			entries = append(entries, Entry{
-				Name:  aws.ToString(user.UserName),
-				IsDir: true,
-			})
+			var modTime time.Time
+			if user.CreateDate != nil {
+				modTime = *user.CreateDate
+			}
+			entry := Entry{
+				Name:    aws.ToString(user.UserName),
+				IsDir:   true,
+				ModTime: modTime,
+			}
+			entries = append(entries, entry)
+			// Pre-cache stat to avoid extra API call
+			p.cache.Set("stat:users/"+aws.ToString(user.UserName), &entry)
 		}
 	}
 
@@ -139,10 +147,18 @@ func (p *IAMProvider) listRoles(ctx context.Context) ([]Entry, error) {
 			return nil, err
 		}
 		for _, role := range page.Roles {
-			entries = append(entries, Entry{
-				Name:  aws.ToString(role.RoleName),
-				IsDir: true,
-			})
+			var modTime time.Time
+			if role.CreateDate != nil {
+				modTime = *role.CreateDate
+			}
+			entry := Entry{
+				Name:    aws.ToString(role.RoleName),
+				IsDir:   true,
+				ModTime: modTime,
+			}
+			entries = append(entries, entry)
+			// Pre-cache stat to avoid extra API call
+			p.cache.Set("stat:roles/"+aws.ToString(role.RoleName), &entry)
 		}
 	}
 
@@ -169,10 +185,19 @@ func (p *IAMProvider) listPolicies(ctx context.Context) ([]Entry, error) {
 			return nil, err
 		}
 		for _, policy := range page.Policies {
-			entries = append(entries, Entry{
-				Name:  aws.ToString(policy.PolicyName) + ".json",
-				IsDir: false,
-			})
+			var modTime time.Time
+			if policy.UpdateDate != nil {
+				modTime = *policy.UpdateDate
+			}
+			name := aws.ToString(policy.PolicyName) + ".json"
+			entry := Entry{
+				Name:    name,
+				IsDir:   false,
+				ModTime: modTime,
+			}
+			entries = append(entries, entry)
+			// Pre-cache stat to avoid extra API call
+			p.cache.Set("stat:policies/"+name, &entry)
 		}
 	}
 
@@ -189,10 +214,18 @@ func (p *IAMProvider) listGroups(ctx context.Context) ([]Entry, error) {
 			return nil, err
 		}
 		for _, group := range page.Groups {
-			entries = append(entries, Entry{
-				Name:  aws.ToString(group.GroupName),
-				IsDir: true,
-			})
+			var modTime time.Time
+			if group.CreateDate != nil {
+				modTime = *group.CreateDate
+			}
+			entry := Entry{
+				Name:    aws.ToString(group.GroupName),
+				IsDir:   true,
+				ModTime: modTime,
+			}
+			entries = append(entries, entry)
+			// Pre-cache stat to avoid extra API call
+			p.cache.Set("stat:groups/"+aws.ToString(group.GroupName), &entry)
 		}
 	}
 

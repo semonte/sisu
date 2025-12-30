@@ -104,10 +104,13 @@ func (p *VPCProvider) listVPCs(ctx context.Context) ([]Entry, error) {
 
 	entries := make([]Entry, len(resp.Vpcs))
 	for i, vpc := range resp.Vpcs {
-		entries[i] = Entry{
+		entry := Entry{
 			Name:  aws.ToString(vpc.VpcId),
 			IsDir: true,
 		}
+		entries[i] = entry
+		// Pre-cache stat to avoid extra API call
+		p.cache.Set("stat:"+aws.ToString(vpc.VpcId), &entry)
 	}
 
 	return entries, nil
@@ -125,10 +128,14 @@ func (p *VPCProvider) listSubnets(ctx context.Context, vpcID string) ([]Entry, e
 
 	entries := make([]Entry, len(resp.Subnets))
 	for i, subnet := range resp.Subnets {
-		entries[i] = Entry{
-			Name:  aws.ToString(subnet.SubnetId) + ".json",
+		name := aws.ToString(subnet.SubnetId) + ".json"
+		entry := Entry{
+			Name:  name,
 			IsDir: false,
 		}
+		entries[i] = entry
+		// Pre-cache stat to avoid extra API call
+		p.cache.Set("stat:"+vpcID+"/subnets/"+name, &entry)
 	}
 
 	return entries, nil
@@ -146,10 +153,14 @@ func (p *VPCProvider) listRouteTables(ctx context.Context, vpcID string) ([]Entr
 
 	entries := make([]Entry, len(resp.RouteTables))
 	for i, rt := range resp.RouteTables {
-		entries[i] = Entry{
-			Name:  aws.ToString(rt.RouteTableId) + ".json",
+		name := aws.ToString(rt.RouteTableId) + ".json"
+		entry := Entry{
+			Name:  name,
 			IsDir: false,
 		}
+		entries[i] = entry
+		// Pre-cache stat to avoid extra API call
+		p.cache.Set("stat:"+vpcID+"/route-tables/"+name, &entry)
 	}
 
 	return entries, nil
@@ -167,10 +178,14 @@ func (p *VPCProvider) listSecurityGroups(ctx context.Context, vpcID string) ([]E
 
 	entries := make([]Entry, len(resp.SecurityGroups))
 	for i, sg := range resp.SecurityGroups {
-		entries[i] = Entry{
-			Name:  aws.ToString(sg.GroupId) + ".json",
+		name := aws.ToString(sg.GroupId) + ".json"
+		entry := Entry{
+			Name:  name,
 			IsDir: false,
 		}
+		entries[i] = entry
+		// Pre-cache stat to avoid extra API call
+		p.cache.Set("stat:"+vpcID+"/security-groups/"+name, &entry)
 	}
 
 	return entries, nil
